@@ -159,7 +159,8 @@ export default function DataInput() {
   const addSubject = () => {
     if (!subCode || !subName || !subFaculty) return;
     const theoryHrs = parseInt(subHours) || 0;
-    const labHrs = parseInt(subLabHours) || 0;
+    const labSessionsCount = parseInt(subLabHours) || 0;
+    const labHrs = labSessionsCount * 2; // Each lab session is 2 hours
     const totalHrs = theoryHrs + labHrs;
     if (totalHrs <= 0) {
       toast({ title: 'Total hours must be > 0', variant: 'destructive' });
@@ -364,7 +365,7 @@ export default function DataInput() {
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div><Label className="text-xs">Theory Hours/Week</Label><Input type="number" value={subHours} onChange={(e) => setSubHours(e.target.value)} min="0" className="h-8 text-sm" /></div>
-                <div><Label className="text-xs">Lab Hours/Week</Label><Input type="number" value={subLabHours} onChange={(e) => setSubLabHours(e.target.value)} min="0" className="h-8 text-sm" /></div>
+                <div><Label className="text-xs">Lab Sessions (2 hrs each)</Label><Input type="number" value={subLabHours} onChange={(e) => setSubLabHours(e.target.value)} min="0" className="h-8 text-sm" /></div>
               </div>
               {data.faculty.length > 0 && (
                 <div>

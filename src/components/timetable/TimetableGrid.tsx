@@ -70,10 +70,14 @@ export default function TimetableGrid({
       const sameDaySessions = sectionSessions.filter(
         s => s.subjectCode === session.subjectCode && s.day === session.day
       ).map(s => s.slotIndex).sort((a, b) => a - b);
+      
+      const tsm = new TimeSlotManager();
       // If there are consecutive slots, this is a lab pair
       for (let i = 0; i < sameDaySessions.length - 1; i++) {
-        if (Math.abs(sameDaySessions[i] - sameDaySessions[i + 1]) === 1) {
-          if (sameDaySessions[i] === session.slotIndex || sameDaySessions[i + 1] === session.slotIndex) {
+        const slotA = sameDaySessions[i];
+        const slotB = sameDaySessions[i + 1];
+        if (tsm.areSlotsConsecutive(slotA, slotB)) {
+          if (slotA === session.slotIndex || slotB === session.slotIndex) {
             return true;
           }
         }

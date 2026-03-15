@@ -328,30 +328,17 @@ export class ConstraintEngine {
           if (daySessions.length >= 3) {
             violations.push({
               type: 'hard',
-              message: `Integrated 3+ hours on ${day}: ${subject.code} in ${sectionId}`,
+              message: `Integrated subject has 3+ hours on ${day} (not allowed): ${subject.code} in ${sectionId}`,
               penalty: 1000,
             });
-          }
-
-          if (daySessions.length >= 2) {
+          } else if (daySessions.length === 2) {
             const slots = daySessions.map(s => s.slotIndex).sort((a, b) => a - b);
-            const labSlots: number[] = [];
-            for (let i = 0; i < slots.length - 1; i++) {
-              if (this.timeSlotManager.areSlotsConsecutive(slots[i], slots[i + 1])) {
-                labSlots.push(slots[i], slots[i + 1]);
-              }
-            }
-            const nonLabSlots = slots.filter(s => !labSlots.includes(s));
-            for (const ts of nonLabSlots) {
-              for (const ls of labSlots) {
-                if (this.timeSlotManager.areSlotsConsecutive(ts, ls)) {
-                  violations.push({
-                    type: 'hard',
-                    message: `Integrated theory adjacent to lab on ${day}: ${subject.code} in ${sectionId}`,
-                    penalty: 1000,
-                  });
-                }
-              }
+            if (!this.timeSlotManager.areSlotsConsecutive(slots[0], slots[1])) {
+              violations.push({
+                type: 'hard',
+                message: `Integrated subject has 2 non-consecutive hours on ${day} (duplicate theory): ${subject.code} in ${sectionId}`,
+                penalty: 1000,
+              });
             }
           }
         }

@@ -198,8 +198,8 @@ export class GeneticAlgorithm {
         const existingSubj = this.subjectMap.get(s.subjectCode);
         const currentSubj = this.subjectMap.get(currentSubjectCode);
         if (existingSubj && currentSubj
-            && s.subjectCode === currentSubjectCode && s.sectionId === currentSectionId
-            && (existingSubj.subjectType === SubjectType.LAB || existingSubj.subjectType === SubjectType.INTEGRATED)) {
+          && s.subjectCode === currentSubjectCode && s.sectionId === currentSectionId
+          && (existingSubj.subjectType === SubjectType.LAB || existingSubj.subjectType === SubjectType.INTEGRATED)) {
           return false; // Allow lab block
         }
       }
@@ -213,6 +213,29 @@ export class GeneticAlgorithm {
     return sessions.some(s =>
       s.sectionId === sectionId && s.slotIndex === 0 && s.subjectCode === subjectCode
     );
+  }
+
+  /** Count the number of valid continuous 2-hour pairs for a subject in a section */
+  private countContinuousPairs(sessions: ClassSession[], sectionId: string, subjectCode: string): number {
+    const subjSessions = sessions.filter(
+      s => !s.isCareerPath && s.sectionId === sectionId && s.subjectCode === subjectCode
+    );
+    const byDay = new Map<Day, number[]>();
+    for (const s of subjSessions) {
+      if (!byDay.has(s.day)) byDay.set(s.day, []);
+      byDay.get(s.day)!.push(s.slotIndex);
+    }
+    let pairs = 0;
+    for (const [, daySlots] of byDay) {
+      daySlots.sort((a, b) => a - b);
+      for (let i = 0; i < daySlots.length - 1; i++) {
+        if (this.timeSlotManager.areSlotsConsecutive(daySlots[i], daySlots[i + 1])) {
+          pairs++;
+          i++;
+        }
+      }
+    }
+    return pairs;
   }
 
   private generateRandomChromosome(): Chromosome {
@@ -309,16 +332,21 @@ export class GeneticAlgorithm {
 
         const labRoomId = this.getLabRoomForSession(subject.code, section.id);
         const labHours = subject.subjectType === SubjectType.INTEGRATED ? subject.labHours : subject.weeklyHours;
+        if (labHours <= 0) continue;
 
-        if (labHours > 0) {
+        const pairsNeeded = Math.ceil(labHours / 2);
+        const existingPairs = this.countContinuousPairs(sessions, section.id, subject.code);
+        const pairsToPlace = pairsNeeded - existingPairs;
+
+        for (let p = 0; p < pairsToPlace; p++) {
           const placed = this.placeConsecutive(
-            sessions, section.id, section.yearNumber, subject, labHours,
+            sessions, section.id, section.yearNumber, subject, 2,
             isFacultyFree, isSectionFree, markFaculty, markSection, labRoomId,
           );
-          remaining -= placed;
 
-          // Aggressive retry if first attempt failed
+          // Aggressive retry if primary placement failed
           if (placed === 0) {
+            let retryDone = false;
             for (const day of DAYS) {
               const slots = this.timeSlotManager.getValidSlots(day);
               for (let i = 0; i <= slots.length - 2; i++) {
@@ -338,11 +366,11 @@ export class GeneticAlgorithm {
                   });
                   markFaculty(fac, day, sl.slotIndex);
                   markSection(section.id, day, sl.slotIndex);
-                  remaining--;
                 }
+                retryDone = true;
                 break;
               }
-              if (remaining <= 0) break;
+              if (retryDone) break;
             }
           }
         }
@@ -350,6 +378,8 @@ export class GeneticAlgorithm {
 
       // --- Phase B: Place theory hours, prioritizing MANDATORY slots ---
       for (const subject of yearSubjects) {
+        if (subject.subjectType === SubjectType.LAB) continue; // Pure labs MUST be placed blocks in Phase A
+        
         const existingCount = sessions.filter(s => s.sectionId === section.id && s.subjectCode === subject.code).length;
         let remaining = subject.weeklyHours - existingCount;
         if (remaining <= 0) continue;
@@ -363,6 +393,8 @@ export class GeneticAlgorithm {
           if (labSessions.length > 0) labDay = labSessions[0].day;
         }
 
+        // PREPOPULATE daysUsed with ALL sessions placed so far (including Phase A labs)
+        // This ensures Phase B never puts a Theory class on the same day as a Lab
         const daysUsed = new Set(
           sessions.filter(s => s.sectionId === section.id && s.subjectCode === subject.code).map(s => s.day),
         );
@@ -374,7 +406,7 @@ export class GeneticAlgorithm {
 
         for (const day of sortedDays) {
           if (remaining <= 0) break;
-          if (subject.subjectType === SubjectType.THEORY && daysUsed.has(day)) continue;
+          if (daysUsed.has(day)) continue; // STRICT: 1 slot per day for Theory. For Integrated, this also naturally prevents placing Theory on the Lab day.
 
           const slots = this.timeSlotManager.getValidSlots(day);
           // Prioritize mandatory slots (0,1,2,4) that are empty for this section
@@ -394,7 +426,8 @@ export class GeneticAlgorithm {
             // First-hour diversity check
             if (slot.slotIndex === 0 && this.isFirstHourDuplicate(sessions, section.id, subject.code)) continue;
 
-            // Integrated theory on lab day: must be after lunch and not adjacent
+            // The day uniqueness is guaranteed by `daysUsed.has(day)` check above.
+            // So we don't need the complex adjacency check for Integrated anymore, but we can leave it just in case.
             if (subject.subjectType === SubjectType.INTEGRATED && day === labDay) {
               if (slot.slotIndex < 4) continue;
               const labSlots = sessions
@@ -561,7 +594,23 @@ export class GeneticAlgorithm {
   }
 
   private mutate(chromosome: Chromosome): Chromosome {
-    const mutable = chromosome.filter((s) => !s.isFixed && !s.isCareerPath);
+    const mutable = chromosome.filter((s) => {
+      if (s.isFixed || s.isCareerPath) return false;
+      const subj = this.subjectMap.get(s.subjectCode);
+      if (subj && subj.subjectType === SubjectType.LAB) return false; // Never mutate pure lab (too hard to repair)
+      if (subj && subj.subjectType === SubjectType.INTEGRATED) {
+        const hasPair = chromosome.some(other => 
+          other !== s && 
+          other.sectionId === s.sectionId && 
+          other.subjectCode === s.subjectCode && 
+          other.day === s.day && 
+          this.timeSlotManager.areSlotsConsecutive(other.slotIndex, s.slotIndex)
+        );
+        if (hasPair) return false; // This is the lab portion, don't break it
+      }
+      return true;
+    });
+
     if (mutable.length === 0) return chromosome;
 
     const session = mutable[Math.floor(this.rand() * mutable.length)];
@@ -586,6 +635,14 @@ export class GeneticAlgorithm {
     // Otherwise mutate time slot — prefer non-morning-empty moves
     const days = seededShuffle(DAYS, this.rand);
     for (const day of days) {
+      // PREVENT CLUMPING: A section must not have multiple theory sessions for the same subject on the same day.
+      // Since `mutate` already skips lab pairs, `session` is definitely a 1-hour theory session.
+      // We must prevent moving it to a day that ALREADY has another session of this subject.
+      const hasSessionOnDay = chromosome.some(
+        s => s !== session && s.sectionId === session.sectionId && s.subjectCode === session.subjectCode && s.day === day
+      );
+      if (hasSessionOnDay) continue;
+
       const slots = seededShuffle(this.timeSlotManager.getValidSlots(day), this.rand);
       for (const slot of slots) {
         const occupied = chromosome.some(
@@ -675,39 +732,18 @@ export class GeneticAlgorithm {
     return repaired;
   }
 
-  /** Validate LAB sessions are exactly in continuous 2-hour blocks for a section+subject */
+  /** Validate LAB sessions have enough continuous 2-hour blocks for a section+subject */
   private isValidLabScheduleForSubject(
     sessions: ClassSession[],
     sectionId: string,
     subjectCode: string,
-    expectedHours: number,
+    expectedLabHours: number,
   ): boolean {
-    const labSessions = sessions.filter(
-      s => !s.isCareerPath && s.sectionId === sectionId && s.subjectCode === subjectCode
-    );
-
-    if (labSessions.length !== expectedHours) return false;
-    if (labSessions.length % 2 !== 0) return false;
-
-    const byDay = new Map<Day, number[]>();
-    for (const s of labSessions) {
-      if (!byDay.has(s.day)) byDay.set(s.day, []);
-      byDay.get(s.day)!.push(s.slotIndex);
-    }
-
-    for (const [, daySlots] of byDay) {
-      daySlots.sort((a, b) => a - b);
-      if (daySlots.length % 2 !== 0) return false;
-      for (let i = 0; i < daySlots.length; i += 2) {
-        const first = daySlots[i];
-        const second = daySlots[i + 1];
-        if (second === undefined || !this.timeSlotManager.areSlotsConsecutive(first, second)) {
-          return false;
-        }
-      }
-    }
-
-    return true;
+    if (expectedLabHours <= 0) return true;
+    const pairs = this.countContinuousPairs(sessions, sectionId, subjectCode);
+    const expectedPairs = Math.ceil(expectedLabHours / 2);
+    // Strict requirement: MUST exactly equal required pairs, not >= (which allows fake labs)
+    return pairs === expectedPairs;
   }
 
   /** Deterministic hard repair for a single LAB subject in a section */
@@ -718,14 +754,47 @@ export class GeneticAlgorithm {
     subject: Subject,
   ): ClassSession[] {
     const original = sessions;
-    let repaired = sessions.filter(
-      s => !(s.sectionId === sectionId && s.subjectCode === subject.code && !s.isCareerPath)
-    );
+    const labHoursNeeded = subject.subjectType === SubjectType.INTEGRATED ? subject.labHours : subject.weeklyHours;
+
+    // For INTEGRATED subjects, preserve standalone theory sessions (non-paired)
+    // For pure LAB subjects, remove all and re-place as pairs
+    let repaired: ClassSession[];
+    if (subject.subjectType === SubjectType.INTEGRATED) {
+      const subjSessions = sessions.filter(
+        s => s.sectionId === sectionId && s.subjectCode === subject.code && !s.isCareerPath
+      );
+      // Identify sessions in continuous pairs (lab portion)
+      const pairedSet = new Set<ClassSession>();
+      const byDay = new Map<Day, ClassSession[]>();
+      for (const s of subjSessions) {
+        if (!byDay.has(s.day)) byDay.set(s.day, []);
+        byDay.get(s.day)!.push(s);
+      }
+      for (const [, daySessions] of byDay) {
+        const sorted = [...daySessions].sort((a, b) => a.slotIndex - b.slotIndex);
+        for (let i = 0; i < sorted.length - 1; i++) {
+          if (this.timeSlotManager.areSlotsConsecutive(sorted[i].slotIndex, sorted[i + 1].slotIndex)) {
+            pairedSet.add(sorted[i]);
+            pairedSet.add(sorted[i + 1]);
+            i++;
+          }
+        }
+      }
+      // Remove only paired (broken lab) sessions; keep standalone theory sessions
+      repaired = sessions.filter(s => {
+        if (s.sectionId !== sectionId || s.subjectCode !== subject.code || s.isCareerPath) return true;
+        return !pairedSet.has(s);
+      });
+    } else {
+      repaired = sessions.filter(
+        s => !(s.sectionId === sectionId && s.subjectCode === subject.code && !s.isCareerPath)
+      );
+    }
 
     const labRoomId = this.getLabRoomForSession(subject.code, sectionId);
     const preAssigned = getAssignedFaculty(this.facultyMappings, subject.code, sectionId);
     const facultyCandidates = preAssigned ? [preAssigned] : [...subject.eligibleFacultyIds];
-    const requiredPairs = Math.floor(subject.weeklyHours / 2);
+    const requiredPairs = Math.ceil(labHoursNeeded / 2);
 
     for (let pair = 0; pair < requiredPairs; pair++) {
       let placed = false;
@@ -907,6 +976,12 @@ export class GeneticAlgorithm {
             s => s !== session && s.facultyId === session.facultyId && s.day === day && s.slotIndex === targetSlot
           );
           if (facultyBusy) continue;
+          // Check no back-to-back faculty conflict at target slot
+          const backToBack = repaired.some(
+            s => s !== session && s.facultyId === session.facultyId && s.day === day
+              && this.timeSlotManager.areSlotsConsecutive(s.slotIndex, targetSlot)
+          );
+          if (backToBack) continue;
           session.slotIndex = targetSlot;
         }
       }

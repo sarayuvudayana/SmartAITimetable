@@ -32,6 +32,7 @@ export class ConstraintEngine {
     return [
       ...this.checkFacultyConflicts(sessions),
       ...this.checkFacultyBackToBack(sessions),
+      ...this.checkFacultyBreakSandwich(sessions),
       ...this.checkFirstHourDiversity(sessions),
       ...this.checkDuplicateSubjectPerDay(sessions),
       ...this.checkInvalidSlots(sessions),
@@ -39,11 +40,94 @@ export class ConstraintEngine {
       ...this.checkCareerPathSync(sessions),
       ...this.checkFacultyMappingViolations(sessions),
       ...this.checkIntegratedSubjectRules(sessions),
+      ...this.checkYear3DailyWorkload(sessions),
       ...this.checkLeisureHourPlacement(sessions),
       ...this.checkLabRoomClashes(sessions),
       ...this.checkLabRoomMappingImmutability(sessions),
+      ...this.checkOneLabPerDay(sessions),
+      ...this.checkMissingHours(sessions),
+      ...this.checkCareerPathLabCapacityOverlap(sessions),
+      ...this.checkThirtyFiveCapacityLabPairing(sessions),
+      ...this.checkFacultySectionConsistency(sessions),
       ...this.checkSoftConstraints(sessions),
     ];
+  }
+
+  // ─── HARD: Year 3 Daily Workload Balancing ─────────────────────
+  private checkYear3DailyWorkload(sessions: ClassSession[]): ConstraintViolation[] {
+    const violations: ConstraintViolation[] = [];
+    const year3Sections = [...new Set(sessions.filter(s => s.yearNumber === 3).map(s => s.sectionId))];
+
+    for (const sectionId of year3Sections) {
+      const sectionSessions = sessions.filter(s => s.sectionId === sectionId);
+      const totalPlaced = sectionSessions.length;
+      if (totalPlaced === 0) continue;
+
+      const expectedPerDay = Math.floor(totalPlaced / 5);
+      const remainder = totalPlaced % 5;
+      const maxAllowed = expectedPerDay + (remainder > 0 ? 1 : 0);
+      const minAllowed = expectedPerDay;
+
+      const byDay = new Map<string, number>();
+      for (const day of ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']) {
+        byDay.set(day, 0);
+      }
+
+      for (const s of sectionSessions) {
+        byDay.set(s.day, (byDay.get(s.day) || 0) + 1);
+      }
+
+      for (const [day, count] of byDay) {
+        if (count > maxAllowed) {
+          violations.push({
+            type: 'hard',
+            message: `Year 3 workload unbalanced: ${sectionId} has ${count} sessions on ${day} (max allowed ${maxAllowed})`,
+            penalty: 150 * (count - maxAllowed),
+          });
+        }
+        if (count < minAllowed) {
+          violations.push({
+            type: 'hard',
+            message: `Year 3 workload unbalanced: ${sectionId} has ${count} sessions on ${day} (min allowed ${minAllowed})`,
+            penalty: 150 * (minAllowed - count),
+          });
+        }
+      }
+    }
+    return violations;
+  }
+
+  private checkMissingHours(sessions: ClassSession[]): ConstraintViolation[] {
+    const violations: ConstraintViolation[] = [];
+    const sectionIds = [...new Set(sessions.map(s => s.sectionId))];
+
+    // Get all years currently in sessions to find relevant subjects
+    const years = [...new Set(sessions.map(s => s.yearNumber))];
+    const relevantSubjects = [...this.subjects.values()].filter(s => years.includes(s.yearNumber));
+
+    for (const sectionId of sectionIds) {
+      // Find year for this section from sessions
+      const sample = sessions.find(s => s.sectionId === sectionId);
+      if (!sample) continue;
+      const yearNumber = sample.yearNumber;
+
+      const yearSubjects = relevantSubjects.filter(s => s.yearNumber === yearNumber);
+
+      for (const subject of yearSubjects) {
+        const actualHours = sessions.filter(
+          s => s.sectionId === sectionId && s.subjectCode === subject.code
+        ).length;
+
+        if (actualHours < subject.weeklyHours) {
+          violations.push({
+            type: 'hard',
+            message: `Missing hours: ${subject.code} in ${sectionId} (${actualHours}/${subject.weeklyHours})`,
+            penalty: 1000 * (subject.weeklyHours - actualHours),
+          });
+        }
+      }
+    }
+    return violations;
   }
 
   calculateFitness(sessions: ClassSession[]): number {
@@ -68,13 +152,52 @@ export class ConstraintEngine {
     const violations: ConstraintViolation[] = [];
     const slotMap = new Map<string, ClassSession[]>();
     for (const session of sessions) {
-      const key = `${session.facultyId}-${session.day}-${session.slotIndex}`;
-      if (!slotMap.has(key)) slotMap.set(key, []);
-      slotMap.get(key)!.push(session);
+      const facs = [...new Set([
+        session.facultyId,
+        ...(session.secondFacultyId ? [session.secondFacultyId] : []),
+        ...(session.facultyIds || [])
+      ])].filter(Boolean);
+
+      for (const fac of facs) {
+        const key = `${fac}-${session.day}-${session.slotIndex}`;
+        if (!slotMap.has(key)) slotMap.set(key, []);
+        slotMap.get(key)!.push(session);
+      }
     }
     for (const [key, classes] of slotMap) {
       if (classes.length > 1) {
-        violations.push({ type: 'hard', message: `Faculty conflict: ${key}`, penalty: 1000 });
+        // IF multiple sessions at the same (faculty, slot) are for the SAME Career Path subject, it's NOT a conflict.
+        // It IS a conflict if:
+        // 1. One is Career Path and another is NOT.
+        // 2. Both are Career Path but for DIFFERENT subjects.
+        // 3. Neither is Career Path (normal collision).
+
+        const careerPathSessions = classes.filter(c => c.isCareerPath);
+        const regularSessions = classes.filter(c => !c.isCareerPath);
+
+        if (careerPathSessions.length > 0) {
+          // If there are regular sessions at the same time as career path, it's a conflict
+          if (regularSessions.length > 0) {
+            violations.push({
+              type: 'hard',
+              message: `Faculty conflict: ${key.split('-')[0]} is in Career Path but also assigned to sections: ${regularSessions.map(s => s.sectionId).join(', ')}`,
+              penalty: 2000
+            });
+          } else {
+            // Check if all career path sessions are for the same subject
+            const uniqueSubjs = new Set(careerPathSessions.map(c => c.subjectCode));
+            if (uniqueSubjs.size > 1) {
+              violations.push({
+                type: 'hard',
+                message: `Faculty conflict: ${key.split('-')[0]} is in multiple Career Path subjects: ${Array.from(uniqueSubjs).join(', ')}`,
+                penalty: 2000
+              });
+            }
+          }
+        } else if (regularSessions.length > 1) {
+          // Normal collisions between regular sessions
+          violations.push({ type: 'hard', message: `Faculty conflict: ${key}`, penalty: 2000 });
+        }
       }
     }
     return violations;
@@ -87,9 +210,17 @@ export class ConstraintEngine {
     // Build a lookup: faculty+day+slot → session
     const facultyDaySessions = new Map<string, ClassSession[]>();
     for (const session of sessions) {
-      const key = `${session.facultyId}-${session.day}`;
-      if (!facultyDaySessions.has(key)) facultyDaySessions.set(key, []);
-      facultyDaySessions.get(key)!.push(session);
+      const facs = [...new Set([
+        session.facultyId,
+        ...(session.secondFacultyId ? [session.secondFacultyId] : []),
+        ...(session.facultyIds || [])
+      ])].filter(Boolean);
+
+      for (const fac of facs) {
+        const key = `${fac}-${session.day}`;
+        if (!facultyDaySessions.has(key)) facultyDaySessions.set(key, []);
+        facultyDaySessions.get(key)!.push(session);
+      }
     }
 
     for (const [key, daySessions] of facultyDaySessions) {
@@ -153,6 +284,53 @@ export class ConstraintEngine {
             });
           }
         }
+      }
+    }
+
+    return violations;
+  }
+
+  // ─── HARD: If faculty has class before break, no class after break ───
+  private checkFacultyBreakSandwich(sessions: ClassSession[]): ConstraintViolation[] {
+    const violations: ConstraintViolation[] = [];
+
+    // Build lookup: faculty+day → list of sessions
+    const facDaySessions = new Map<string, ClassSession[]>();
+    for (const s of sessions) {
+      const facs = [...new Set([
+        s.facultyId,
+        ...(s.secondFacultyId ? [s.secondFacultyId] : []),
+        ...(s.facultyIds || [])
+      ])].filter(Boolean);
+
+      for (const fac of facs) {
+        const key = `${fac}-${s.day}`;
+        if (!facDaySessions.has(key)) facDaySessions.set(key, []);
+        facDaySessions.get(key)!.push(s);
+      }
+    }
+
+    // Break is between slot 1 and slot 2; Lunch is between slot 3 and slot 4
+    const BREAK_PAIRS: [number, number][] = [[1, 2], [3, 4]];
+
+    for (const [key, daySessions] of facDaySessions) {
+      const slotMap = new Map<number, ClassSession>();
+      for (const s of daySessions) slotMap.set(s.slotIndex, s);
+
+      for (const [beforeSlot, afterSlot] of BREAK_PAIRS) {
+        const beforeSession = slotMap.get(beforeSlot);
+        const afterSession = slotMap.get(afterSlot);
+        if (!beforeSession || !afterSession) continue;
+
+        const breakName = beforeSlot === 1 ? 'break' : 'lunch';
+        const facId = key.split('-')[0];
+
+        // Any class sequence across the break for the same faculty is a violation.
+        violations.push({
+          type: 'hard',
+          message: `Faculty class across ${breakName}: ${facId} has class in slot ${beforeSlot}, cannot have class in slot ${afterSlot}`,
+          penalty: 1000,
+        });
       }
     }
 
@@ -463,15 +641,21 @@ export class ConstraintEngine {
     const violations: ConstraintViolation[] = [];
 
     for (const session of sessions) {
-      if (session.slotIndex === 6) {
-        violations.push({ type: 'soft', message: `Late slot`, penalty: 5 });
-      }
+
     }
 
     const facultyDayCount = new Map<string, number>();
     for (const session of sessions) {
-      const key = `${session.facultyId}-${session.day}`;
-      facultyDayCount.set(key, (facultyDayCount.get(key) || 0) + 1);
+      const facs = [...new Set([
+        session.facultyId,
+        ...(session.secondFacultyId ? [session.secondFacultyId] : []),
+        ...(session.facultyIds || [])
+      ])].filter(Boolean);
+
+      for (const fac of facs) {
+        const key = `${fac}-${session.day}`;
+        facultyDayCount.set(key, (facultyDayCount.get(key) || 0) + 1);
+      }
     }
     for (const [, count] of facultyDayCount) {
       if (count > 4) {
@@ -506,7 +690,12 @@ export class ConstraintEngine {
         subjectFacultyLoad.set(session.subjectCode, new Map());
       }
       const loads = subjectFacultyLoad.get(session.subjectCode)!;
-      loads.set(session.facultyId, (loads.get(session.facultyId) || 0) + 1);
+      const facs = [session.facultyId];
+      if (session.secondFacultyId) facs.push(session.secondFacultyId);
+
+      for (const fac of facs) {
+        loads.set(fac, (loads.get(fac) || 0) + 1);
+      }
     }
     for (const [, loads] of subjectFacultyLoad) {
       const counts = [...loads.values()];
@@ -517,6 +706,173 @@ export class ConstraintEngine {
         if (imbalance > 2) {
           violations.push({ type: 'soft', message: `Faculty workload imbalance`, penalty: 5 * (imbalance - 2) });
         }
+      }
+    }
+
+    return violations;
+  }
+
+  private checkOneLabPerDay(sessions: ClassSession[]): ConstraintViolation[] {
+    const violations: ConstraintViolation[] = [];
+    const sectionIds = [...new Set(sessions.map(s => s.sectionId))];
+
+    for (const sectionId of sectionIds) {
+      const sectionSessions = sessions.filter(s => s.sectionId === sectionId);
+      const byDay = new Map<Day, ClassSession[]>();
+      for (const s of sectionSessions) {
+        if (!byDay.has(s.day)) byDay.set(s.day, []);
+        byDay.get(s.day)!.push(s);
+      }
+
+      for (const [day, daySessions] of byDay) {
+        const sorted = daySessions.sort((a, b) => a.slotIndex - b.slotIndex);
+        const labSubjectsOnDay = new Set<string>();
+
+        for (let i = 0; i < sorted.length - 1; i++) {
+          const s1 = sorted[i];
+          const s2 = sorted[i + 1];
+          if (this.timeSlotManager.areSlotsConsecutive(s1.slotIndex, s2.slotIndex)) {
+            const subj = this.subjects.get(s1.subjectCode);
+            if (subj && s1.subjectCode === s2.subjectCode && 
+                (subj.subjectType === SubjectType.LAB || subj.subjectType === SubjectType.INTEGRATED)) {
+              labSubjectsOnDay.add(s1.subjectCode);
+              i++; // skip second slot of potential pair
+            }
+          }
+        }
+
+        if (labSubjectsOnDay.size > 1) {
+          violations.push({
+            type: 'hard',
+            message: `More than one lab on ${day} for ${sectionId}: ${Array.from(labSubjectsOnDay).join(', ')}`,
+            penalty: 1000,
+          });
+        }
+      }
+    }
+
+    return violations;
+  }
+
+  // ─── HARD: Career Path Lab capacity reservation (70 capacity labs reserved) ───
+  private checkCareerPathLabCapacityOverlap(sessions: ClassSession[]): ConstraintViolation[] {
+    const violations: ConstraintViolation[] = [];
+    
+    // Find all slots where a Career Path lab is scheduled
+    const cpLabSlots = new Set<string>();
+    for (const s of sessions) {
+      if (s.isCareerPath && s.careerPathSlotType === 'lab') {
+        cpLabSlots.add(`${s.day}-${s.slotIndex}`);
+      }
+    }
+
+    if (cpLabSlots.size === 0) return violations;
+
+    // Identify labs with exactly 70 capacity
+    const reservedLabIds = new Set(this.labRooms.filter(lr => lr.capacity === 70).map(lr => lr.id));
+    if (reservedLabIds.size === 0) return violations;
+
+    for (const session of sessions) {
+      if (session.isCareerPath) continue; // Exceptions: CP labs themselves occupy these rooms
+      // If a session is assigned to a 70-capacity lab at the same time as a CP lab
+      if (session.labRoomId && reservedLabIds.has(session.labRoomId)) {
+        if (cpLabSlots.has(`${session.day}-${session.slotIndex}`)) {
+          violations.push({
+            type: 'hard',
+            message: `Resource conflict: Lab ${session.labRoomId} (70 cap) is reserved for Career Path at ${session.day} slot ${session.slotIndex}`,
+            penalty: 1000,
+          });
+        }
+      }
+    }
+
+    return violations;
+  }
+
+  // ─── HARD: 35-Capacity Lab Pairing (Shared Usage) ───
+  private checkThirtyFiveCapacityLabPairing(sessions: ClassSession[]): ConstraintViolation[] {
+    const violations: ConstraintViolation[] = [];
+    
+    // Group all sessions by day and slot
+    const slotMap = new Map<string, ClassSession[]>();
+    for (const s of sessions) {
+      if (!s.labRoomId) continue;
+      const key = `${s.day}-${s.slotIndex}`;
+      if (!slotMap.has(key)) slotMap.set(key, []);
+      slotMap.get(key)!.push(s);
+    }
+
+    const thirtyFiveCapLabIds = new Set(this.labRooms.filter(lr => lr.capacity === 35).map(lr => lr.id));
+    if (thirtyFiveCapLabIds.size === 0) return violations;
+    const maxSectionsAllowed = Math.floor(thirtyFiveCapLabIds.size / 2);
+    if (maxSectionsAllowed === 0) return violations;
+
+    for (const [key, slotSessions] of slotMap) {
+       const sectionsUsing35Cap = new Set<string>();
+       for (const s of slotSessions) {
+          if (thirtyFiveCapLabIds.has(s.labRoomId!)) {
+             sectionsUsing35Cap.add(s.sectionId);
+          }
+       }
+       // If more sections are using 35-cap labs than we have pairs for, it's a conflict
+       if (sectionsUsing35Cap.size > maxSectionsAllowed) {
+          const [day, slot] = key.split('-');
+          violations.push({
+             type: 'hard',
+             message: `Resource conflict: Multiple sections (${Array.from(sectionsUsing35Cap).join(', ')}) scheduled in 35-capacity labs at ${day} slot ${slot}. Only ${maxSectionsAllowed} section(s) can use 35-cap labs simultaneously.`,
+             penalty: 1000,
+          });
+       }
+    }
+
+    return violations;
+  }
+
+  // ─── HARD: Faculty-Section Consistency ─────────────────────────
+  private checkFacultySectionConsistency(sessions: ClassSession[]): ConstraintViolation[] {
+    const violations: ConstraintViolation[] = [];
+
+    // Rule 1: Same (subject, section) must always have the same faculty
+    const subjectSectionGroups = new Map<string, Set<string>>();
+    // Rule 2: Same (faculty, section) must only teach ONE subject
+    const facultySectionGroups = new Map<string, Set<string>>();
+
+    for (const s of sessions) {
+      if (s.isCareerPath) continue; // Career Path sessions are handled differently
+
+      // Rule 1 grouping
+      const ssKey = `${s.sectionId}-${s.subjectCode}`;
+      if (!subjectSectionGroups.has(ssKey)) subjectSectionGroups.set(ssKey, new Set());
+      subjectSectionGroups.get(ssKey)!.add(s.facultyId);
+      if (s.secondFacultyId) subjectSectionGroups.get(ssKey)!.add(s.secondFacultyId);
+
+      // Rule 2 grouping
+      const fsKey = `${s.facultyId}-${s.sectionId}`;
+      if (!facultySectionGroups.has(fsKey)) facultySectionGroups.set(fsKey, new Set());
+      facultySectionGroups.get(fsKey)!.add(s.subjectCode);
+    }
+
+    // Rule 1 violations: multiple faculties for same subject+section
+    for (const [key, faculties] of subjectSectionGroups) {
+      if (faculties.size > 1) {
+        const [sectionId, subjectCode] = key.split('-');
+        violations.push({
+          type: 'hard',
+          message: `Faculty inconsistency: ${subjectCode} in ${sectionId} has multiple faculties assigned: ${Array.from(faculties).join(', ')}`,
+          penalty: 1000,
+        });
+      }
+    }
+
+    // Rule 2 violations: one faculty teaching multiple subjects in the same section
+    for (const [key, subjects] of facultySectionGroups) {
+      if (subjects.size > 1) {
+        const [facultyId, sectionId] = key.split('-');
+        violations.push({
+          type: 'hard',
+          message: `Faculty exclusivity violated: ${facultyId} teaches multiple subjects in ${sectionId}: ${Array.from(subjects).join(', ')}`,
+          penalty: 2000,
+        });
       }
     }
 

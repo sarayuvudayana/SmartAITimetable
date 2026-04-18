@@ -60,6 +60,18 @@ export function buildFacultySectionMappings(
 ): FacultySectionMapping[] {
   const mappings: FacultySectionMapping[] = [];
 
+  // Track which faculty is already assigned to which section (for any subject)
+  // key = `${sectionId}`, value = set of faculty IDs already assigned to that section
+  const sectionFacultyMap = new Map<string, Set<string>>();
+
+  const isFacultyTakenInSection = (sectionId: string, facultyId: string): boolean => {
+    return sectionFacultyMap.get(sectionId)?.has(facultyId) || false;
+  };
+  const markFacultyForSection = (sectionId: string, facultyId: string) => {
+    if (!sectionFacultyMap.has(sectionId)) sectionFacultyMap.set(sectionId, new Set());
+    sectionFacultyMap.get(sectionId)!.add(facultyId);
+  };
+
   // Process subjects sorted by fewer eligible faculty first so their load
   // counts can feed into later decisions (Scenario 3).
   const multiFacultySubjects = subjects
@@ -77,42 +89,80 @@ export function buildFacultySectionMappings(
     const shuffledFaculty = shuffle([...subject.eligibleFacultyIds]);
     const shuffledSections = shuffle([...yearSections]);
 
-    if (numFaculty >= numSections) {
-      // Scenario 2 (or more faculty than sections): 1-to-1 assignment
-      for (let i = 0; i < numSections; i++) {
-        mappings.push({
-          subjectCode: subject.code,
-          sectionId: shuffledSections[i].id,
-          facultyId: shuffledFaculty[i % numFaculty],
-          yearNumber: subject.yearNumber,
-        });
-      }
-    } else {
-      // numFaculty < numSections
-      // Compute how many sections each faculty gets
-      const base = Math.floor(numSections / numFaculty);
-      const extra = numSections % numFaculty;
+    // Scenario 4: Smart spread with load balancing and exclusivity
+    const globalLoad = computeGlobalLoad(mappings, subjects);
+    
+    // Sort faculty by their global load to distribute 'extras' fairly
+    const sortedFaculty = [...subject.eligibleFacultyIds].sort((a, b) => {
+      const loadA = globalLoad.get(a) || 0;
+      const loadB = globalLoad.get(b) || 0;
+      return loadA - loadB;
+    });
 
-      // Decide who gets extra sections — pick faculty with lowest global load
-      const globalLoad = computeGlobalLoad(mappings, subjects);
-      const facultySorted = [...shuffledFaculty].sort((a, b) => {
-        return (globalLoad.get(a) || 0) - (globalLoad.get(b) || 0);
-      });
+    // Calculate how many sections each faculty SHOULD get
+    const baseCount = Math.floor(numSections / numFaculty);
+    const extraCount = numSections % numFaculty;
 
-      // First `extra` faculty get (base+1) sections, rest get `base`
-      let sectionIdx = 0;
-      for (let f = 0; f < numFaculty; f++) {
-        const count = f < extra ? base + 1 : base;
-        for (let c = 0; c < count && sectionIdx < numSections; c++) {
-          mappings.push({
-            subjectCode: subject.code,
-            sectionId: shuffledSections[sectionIdx].id,
-            facultyId: facultySorted[f],
-            yearNumber: subject.yearNumber,
-          });
-          sectionIdx++;
+    // We will try multiple random shuffles of the sections to find a mapping 
+    // that respects the 'One Faculty per Section' rule as best as possible.
+    let bestMappingsForSubject: FacultySectionMapping[] = [];
+    let bestViolationCount = Infinity;
+
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const currentAttemptMappings: FacultySectionMapping[] = [];
+      const currentAssignmentPool: string[] = [];
+      
+      // Build pool for this attempt (shuffling who gets the extra seats if load is equal)
+      for (let i = 0; i < numFaculty; i++) {
+        const seats = i < extraCount ? baseCount + 1 : baseCount;
+        for (let s = 0; s < seats; s++) {
+          currentAssignmentPool.push(sortedFaculty[i]);
         }
       }
+
+      const shuffledSections = shuffle([...yearSections]);
+      const shuffledPool = shuffle([...currentAssignmentPool]);
+      let violations = 0;
+
+      for (const section of shuffledSections) {
+        let bestSeatIdx = -1;
+        
+        // Attempt 1: Perfect match (Not in this section yet)
+        for (let i = 0; i < shuffledPool.length; i++) {
+          if (!isFacultyTakenInSection(section.id, shuffledPool[i])) {
+            bestSeatIdx = i;
+            break;
+          }
+        }
+
+        // Attempt 2: Forced match (if perfect fail)
+        if (bestSeatIdx === -1) {
+          bestSeatIdx = 0; // Take the first available if all are conflicting
+          violations++;
+        }
+
+        if (shuffledPool.length > 0) {
+          const fid = shuffledPool.splice(bestSeatIdx, 1)[0];
+          currentAttemptMappings.push({
+            subjectCode: subject.code,
+            sectionId: section.id,
+            facultyId: fid,
+            yearNumber: subject.yearNumber,
+          });
+        }
+      }
+
+      if (violations < bestViolationCount) {
+        bestViolationCount = violations;
+        bestMappingsForSubject = currentAttemptMappings;
+        if (violations === 0) break; // Found a perfect one
+      }
+    }
+
+    // Apply the best attempt
+    for (const m of bestMappingsForSubject) {
+      mappings.push(m);
+      markFacultyForSection(m.sectionId, m.facultyId);
     }
   }
 

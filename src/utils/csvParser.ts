@@ -59,6 +59,7 @@ export function parseSubjectCSV(text: string): Subject[] {
       subjectType: parseSubjectType(r[4]),
       labHours: parseInt(r[5], 10) || 0,
       yearNumber: parseInt(r[6], 10) || 1,
+      credits: r[8] ? parseFloat(r[8]) || 3 : 3,
     };
   });
 }
@@ -91,7 +92,7 @@ export function parseCareerPathCSV(text: string): CareerPathClass[] {
   const start = rows[0]?.[0]?.toLowerCase().includes('subject') ? 1 : 0;
   return rows.slice(start).filter(r => r.length >= 5).map((r) => ({
     subjectCode: r[0],
-    facultyId: r[1],
+    facultyIds: r[1] ? r[1].split(';').map(f => f.trim()).filter(Boolean) : [],
     yearNumber: parseInt(r[2], 10) || 3,
     day: parseDay(r[3]),
     slotIndex: parseInt(r[4], 10) || 0,

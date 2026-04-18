@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Trash2, Upload, Plus, Pencil } from 'lucide-react';
+import { cn } from '@/lib/utils';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import {
   AlertDialog,
@@ -72,20 +73,43 @@ export default function DataInput() {
   const [editSubFaculty, setEditSubFaculty] = useState('');
   const [editSubYear, setEditSubYear] = useState('1');
   const [editSubName, setEditSubName] = useState('');
+  const [editSubHours, setEditSubHours] = useState('3');
+  const [editSubLabHours, setEditSubLabHours] = useState('0');
+  const [editSubEligible, setEditSubEligible] = useState<string[]>([]);
+  const [editSubTheoryCredits, setEditSubTheoryCredits] = useState('3.0');
+  const [editSubLabCredits, setEditSubLabCredits] = useState('1.0');
 
   const openEditSubject = (s: Subject) => {
     setEditSub(s);
     setEditSubFaculty(s.facultyId);
     setEditSubYear(String(s.yearNumber));
     setEditSubName(s.name);
+    setEditSubHours(String(s.weeklyHours - (s.labHours || 0)));
+    setEditSubLabHours(String((s.labHours || 0) / 2));
+    setEditSubEligible(s.eligibleFacultyIds);
+    setEditSubTheoryCredits(String(s.theoryCredits ?? (s.subjectType === SubjectType.LAB ? 0 : 3.0)));
+    setEditSubLabCredits(String(s.labCredits ?? (s.subjectType === SubjectType.THEORY ? 0 : (s.subjectType === SubjectType.INTEGRATED ? 1.0 : 1.5))));
     setEditSubOpen(true);
   };
 
   const saveEditSubject = () => {
     if (!editSub) return;
-    const updatedEligible = editSub.eligibleFacultyIds.includes(editSubFaculty)
-      ? editSub.eligibleFacultyIds
-      : [editSubFaculty, ...editSub.eligibleFacultyIds.filter(f => f !== editSub.facultyId)];
+    const theoryHrs = parseInt(editSubHours) || 0;
+    const labSessions = parseInt(editSubLabHours) || 0;
+    const labHrs = labSessions * 2;
+    const totalHrs = theoryHrs + labHrs;
+    
+    let autoType = SubjectType.THEORY;
+    if (labHrs > 0 && theoryHrs === 0) autoType = SubjectType.LAB;
+    else if (labHrs > 0 && theoryHrs > 0) autoType = SubjectType.INTEGRATED;
+
+    const updatedEligible = editSubEligible.includes(editSubFaculty)
+      ? editSubEligible
+      : [editSubFaculty, ...editSubEligible.filter(f => f !== editSub.facultyId)];
+
+    const theoryC = parseFloat(editSubTheoryCredits) || 0;
+    const labC = parseFloat(editSubLabCredits) || 0;
+    
     dispatch({
       type: 'UPDATE_SUBJECT',
       payload: {
@@ -94,6 +118,12 @@ export default function DataInput() {
         facultyId: editSubFaculty,
         yearNumber: parseInt(editSubYear),
         eligibleFacultyIds: updatedEligible,
+        weeklyHours: totalHrs,
+        labHours: labHrs,
+        subjectType: autoType,
+        credits: theoryC + labC,
+        theoryCredits: theoryC,
+        labCredits: labC,
       },
     });
     setEditSubOpen(false);
@@ -140,13 +170,119 @@ export default function DataInput() {
     }
   };
 
+  // Lab Room edit state
+  const [editLabOpen, setEditLabOpen] = useState(false);
+  const [editLab, setEditLab] = useState<LabRoom | null>(null);
+  const [editLabName, setEditLabName] = useState('');
+  const [editLabCapacity, setEditLabCapacity] = useState('30');
+  const [editLabSubs, setEditLabSubs] = useState<string[]>([]);
+
+  const openEditLab = (l: LabRoom) => {
+    setEditLab(l);
+    setEditLabName(l.name);
+    setEditLabCapacity(String(l.capacity));
+    setEditLabSubs(l.subjectCodes);
+    setEditLabOpen(true);
+  };
+
+  const saveEditLab = () => {
+    if (!editLab) return;
+    dispatch({
+      type: 'UPDATE_LAB_ROOM',
+      payload: {
+        ...editLab,
+        name: editLabName,
+        capacity: parseInt(editLabCapacity) || 30,
+        subjectCodes: editLabSubs,
+      }
+    });
+    setEditLabOpen(false);
+    toast({ title: 'Lab Room updated' });
+  };
+
+  // Fixed Class edit state
+  const [editFixedOpen, setEditFixedOpen] = useState(false);
+  const [editFixedIndex, setEditFixedIndex] = useState<number | null>(null);
+  const [editFixedSub, setEditFixedSub] = useState('');
+  const [editFixedFac, setEditFixedFac] = useState('');
+  const [editFixedYear, setEditFixedYear] = useState('1');
+  const [editFixedSec, setEditFixedSec] = useState('');
+  const [editFixedDay, setEditFixedDay] = useState<Day>(Day.MONDAY);
+  const [editFixedSlot, setEditFixedSlot] = useState('0');
+
+  const openEditFixed = (fc: FixedClass, index: number) => {
+    setEditFixedIndex(index);
+    setEditFixedSub(fc.subjectCode);
+    setEditFixedFac(fc.facultyId);
+    setEditFixedYear(String(fc.yearNumber));
+    setEditFixedSec(fc.sectionId);
+    setEditFixedDay(fc.day);
+    setEditFixedSlot(String(fc.slotIndex));
+    setEditFixedOpen(true);
+  };
+
+  const saveEditFixed = () => {
+    if (editFixedIndex === null) return;
+    const updated = [...data.fixedClasses];
+    updated[editFixedIndex] = {
+      subjectCode: editFixedSub,
+      facultyId: editFixedFac,
+      yearNumber: parseInt(editFixedYear),
+      sectionId: editFixedSec,
+      day: editFixedDay,
+      slotIndex: parseInt(editFixedSlot),
+    };
+    dispatch({ type: 'SET_FIXED_CLASSES', payload: updated });
+    setEditFixedOpen(false);
+    toast({ title: 'Fixed Class updated' });
+  };
+
+  // Career Path edit state
+  const [editCpOpen, setEditCpOpen] = useState(false);
+  const [editCpIndex, setEditCpIndex] = useState<number | null>(null);
+  const [editCpFaculties, setEditCpFaculties] = useState<string[]>([]);
+  const [editCpYear, setEditCpYear] = useState('3');
+  const [editCpDay, setEditCpDay] = useState<Day>(Day.MONDAY);
+  const [editCpSlot, setEditCpSlot] = useState('0');
+  const [editCpType, setEditCpType] = useState<'theory' | 'lab'>('theory');
+  const [editCpCredits, setEditCpCredits] = useState('2.0');
+
+  const openEditCp = (cp: CareerPathClass, index: number) => {
+    setEditCpIndex(index);
+    setEditCpFaculties(cp.facultyIds || []);
+    setEditCpYear(String(cp.yearNumber));
+    setEditCpDay(cp.day);
+    setEditCpSlot(String(cp.slotIndex));
+    setEditCpType(cp.slotType);
+    setEditCpCredits(String(cp.credits || 2.0));
+    setEditCpOpen(true);
+  };
+
+  const saveEditCp = () => {
+    if (editCpIndex === null) return;
+    const updated = [...data.careerPathClasses];
+    updated[editCpIndex] = {
+      subjectCode: 'career',
+      facultyIds: editCpFaculties,
+      yearNumber: parseInt(editCpYear),
+      day: editCpDay,
+      slotIndex: parseInt(editCpSlot),
+      slotType: editCpType,
+      credits: parseFloat(editCpCredits) || 2.0,
+    };
+    dispatch({ type: 'SET_CAREER_CLASSES', payload: updated });
+    setEditCpOpen(false);
+    toast({ title: 'Career Path updated' });
+  };
+
   // Subject form
   const [subCode, setSubCode] = useState('');
   const [subName, setSubName] = useState('');
   const [subFaculty, setSubFaculty] = useState('');
   const [subEligibleFaculty, setSubEligibleFaculty] = useState<string[]>([]);
   const [subHours, setSubHours] = useState('3');
-  
+  const [subTheoryCredits, setSubTheoryCredits] = useState('3.0');
+  const [subLabCredits, setSubLabCredits] = useState('0');
   const [subLabHours, setSubLabHours] = useState('0');
   const [subYear, setSubYear] = useState('1');
 
@@ -167,10 +303,11 @@ export default function DataInput() {
       return;
     }
     // Auto-determine type: lab only, theory only, or integrated (both)
-    let autoType = SubjectType.THEORY;
-    if (labHrs > 0 && theoryHrs === 0) autoType = SubjectType.LAB;
-    else if (labHrs > 0 && theoryHrs > 0) autoType = SubjectType.INTEGRATED;
+    const theoryC = parseFloat(subTheoryCredits) || 0;
+    const labC = parseFloat(subLabCredits) || 0;
+    const autoType = theoryHrs > 0 && labHrs > 0 ? SubjectType.INTEGRATED : (labHrs > 0 ? SubjectType.LAB : SubjectType.THEORY);
     const eligibleFacultyIds = [...new Set([subFaculty, ...subEligibleFaculty])];
+    
     dispatch({
       type: 'ADD_SUBJECT',
       payload: {
@@ -178,9 +315,18 @@ export default function DataInput() {
         eligibleFacultyIds,
         weeklyHours: totalHrs, subjectType: autoType,
         labHours: labHrs, yearNumber: parseInt(subYear),
+        credits: theoryC + labC,
+        theoryCredits: theoryC,
+        labCredits: labC,
       },
     });
-    setSubCode(''); setSubName(''); setSubEligibleFaculty([]);
+    setSubCode(''); 
+    setSubName(''); 
+    setSubHours('3');
+    setSubLabHours('0');
+    setSubTheoryCredits('3.0'); 
+    setSubLabCredits('0');
+    setSubEligibleFaculty([]);
   };
 
   // Section form
@@ -221,28 +367,55 @@ export default function DataInput() {
   };
 
   // Career path form
-  const [cpSubject, setCpSubject] = useState('');
-  const [cpFaculty, setCpFaculty] = useState('');
+  const [cpFaculties, setCpFaculties] = useState<string[]>([]);
   const [cpYear, setCpYear] = useState('3');
   const [cpDay, setCpDay] = useState<Day>(Day.MONDAY);
   const [cpSlot, setCpSlot] = useState('0');
   const [cpSlotType, setCpSlotType] = useState<'theory' | 'lab'>('theory');
+  const [cpCredits, setCpCredits] = useState('2.0');
+
+  const toggleCpFaculty = (fid: string) => {
+    setCpFaculties(prev =>
+      prev.includes(fid) ? prev.filter(f => f !== fid) : [...prev, fid]
+    );
+  };
 
   const addCareer = () => {
-    if (!cpSubject || !cpFaculty) return;
+    if (cpFaculties.length === 0) {
+      toast({ title: 'Select at least one faculty', variant: 'destructive' });
+      return;
+    }
     const yearNum = parseInt(cpYear);
+    const slotIdx = parseInt(cpSlot);
     if (yearNum < 3 || yearNum > 4) {
       toast({ title: 'Career path is only allowed for 3rd and 4th year', variant: 'destructive' });
       return;
     }
+    
+    // Add primary slot
     dispatch({
       type: 'ADD_CAREER_CLASS',
       payload: {
-        subjectCode: cpSubject, facultyId: cpFaculty,
-        yearNumber: yearNum, day: cpDay, slotIndex: parseInt(cpSlot),
+        subjectCode: 'career', facultyIds: cpFaculties,
+        yearNumber: yearNum, day: cpDay, slotIndex: slotIdx,
         slotType: cpSlotType,
+        credits: parseFloat(cpCredits) || 2.0,
       },
     });
+
+    // If Lab, auto-add 2nd slot
+    if (cpSlotType === 'lab' && slotIdx < 5) {
+      dispatch({
+        type: 'ADD_CAREER_CLASS',
+        payload: {
+          subjectCode: 'career', facultyIds: cpFaculties,
+          yearNumber: yearNum, day: cpDay, slotIndex: slotIdx + 1,
+          slotType: cpSlotType,
+        },
+      });
+    }
+    toast({ title: cpSlotType === 'lab' ? 'Career Lab block added (2hrs)' : 'Career Theory added' });
+    setCpFaculties([]);
   };
 
   // Lab room form
@@ -274,8 +447,21 @@ export default function DataInput() {
   const hasGeneratedTimetable = !!data.generatedTimetable;
 
   return (
-    <div className="p-4 space-y-4 animate-fade-in">
-      <h1 className="text-xl font-bold">Data Input</h1>
+    <div className="p-6 space-y-8 animate-fade-in max-w-6xl mx-auto pb-24">
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-black text-foreground tracking-tight">Data Management</h1>
+          <p className="text-sm text-muted-foreground mt-1 font-medium">Configure faculty, subjects, and scheduling constraints</p>
+        </div>
+        <div className="flex gap-2">
+          <Badge variant="secondary" className="px-3 py-1 text-xs font-bold uppercase tracking-wider">
+            {data.faculty.length} Faculty
+          </Badge>
+          <Badge variant="secondary" className="px-3 py-1 text-xs font-bold uppercase tracking-wider">
+            {data.subjects.length} Subjects
+          </Badge>
+        </div>
+      </div>
 
       {hasGeneratedTimetable && (
         <div className="flex items-center gap-2 p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-xs text-destructive">
@@ -285,13 +471,13 @@ export default function DataInput() {
       )}
 
       <Tabs defaultValue="faculty" className="w-full">
-        <TabsList className="grid grid-cols-6 w-full">
-          <TabsTrigger value="faculty" className="text-xs">Faculty</TabsTrigger>
-          <TabsTrigger value="subjects" className="text-xs">Subjects</TabsTrigger>
-          <TabsTrigger value="sections" className="text-xs">Sections</TabsTrigger>
-          <TabsTrigger value="labs" className="text-xs">Labs</TabsTrigger>
-          <TabsTrigger value="fixed" className="text-xs">Fixed</TabsTrigger>
-          <TabsTrigger value="career" className="text-xs">Career</TabsTrigger>
+        <TabsList className="grid grid-cols-2 md:grid-cols-6 h-auto p-1 bg-muted/50 rounded-xl mb-6">
+          <TabsTrigger value="faculty" className="py-2.5 px-4 rounded-lg data-[state=active]:bg-card data-[state=active]:shadow-md text-sm font-bold">Faculty</TabsTrigger>
+          <TabsTrigger value="subjects" className="py-2.5 px-4 rounded-lg data-[state=active]:bg-card data-[state=active]:shadow-md text-sm font-bold">Subjects</TabsTrigger>
+          <TabsTrigger value="sections" className="py-2.5 px-4 rounded-lg data-[state=active]:bg-card data-[state=active]:shadow-md text-sm font-bold">Sections</TabsTrigger>
+          <TabsTrigger value="labRooms" className="py-2.5 px-4 rounded-lg data-[state=active]:bg-card data-[state=active]:shadow-md text-sm font-bold">Lab Rooms</TabsTrigger>
+          <TabsTrigger value="fixed" className="py-2.5 px-4 rounded-lg data-[state=active]:bg-card data-[state=active]:shadow-md text-sm font-bold">Fixed</TabsTrigger>
+          <TabsTrigger value="career" className="py-2.5 px-4 rounded-lg data-[state=active]:bg-card data-[state=active]:shadow-md text-sm font-bold">Career</TabsTrigger>
         </TabsList>
 
         {/* FACULTY */}
@@ -299,7 +485,7 @@ export default function DataInput() {
           <Card>
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-sm">Faculty ({data.faculty.length})</CardTitle>
+                <CardTitle className="text-base font-black uppercase tracking-widest">Faculty ({data.faculty.length})</CardTitle>
                 <CSVUpload label="CSV" onParse={(t) => {
                   const parsed = parseFacultyCSV(t);
                   dispatch({ type: 'SET_FACULTY', payload: [...data.faculty, ...parsed] });
@@ -309,23 +495,26 @@ export default function DataInput() {
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="grid grid-cols-2 gap-2">
-                <div><Label className="text-xs">ID</Label><Input value={facId} onChange={(e) => setFacId(e.target.value)} placeholder="F001" className="h-8 text-sm" /></div>
-                <div><Label className="text-xs">Short Name</Label><Input value={facName} onChange={(e) => setFacName(e.target.value)} placeholder="Dr.K" className="h-8 text-sm" /></div>
+                <div><Label className="text-sm font-bold mb-1.5 block">ID</Label><Input value={facId} onChange={(e) => setFacId(e.target.value)} placeholder="F001" className="h-8 text-sm" /></div>
+                <div><Label className="text-sm font-bold mb-1.5 block">Short Name</Label><Input value={facName} onChange={(e) => setFacName(e.target.value)} placeholder="Dr.K" className="h-8 text-sm" /></div>
               </div>
               <Button size="sm" onClick={addFaculty} className="w-full"><Plus className="h-3 w-3 mr-1" /> Add Faculty</Button>
-              <div className="space-y-1 mt-2 max-h-48 overflow-auto">
+              <div className="space-y-3 mt-4 max-h-96 overflow-auto custom-scrollbar">
                 {data.faculty.map((f) => (
-                  <div key={f.id} className="flex items-center justify-between p-2 bg-muted rounded text-xs">
-                    <div>
-                      <span className="font-semibold">{f.shortName}</span>
-                      <span className="text-muted-foreground ml-1">({f.id})</span>
+                  <div key={f.id} className="flex items-center justify-between p-5 bg-muted/40 rounded-[1.5rem] border border-border/50 transition-all hover:bg-muted/60 hover:shadow-lg group">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-xl font-black tracking-tighter text-foreground uppercase group-hover:text-primary transition-colors">{f.shortName}</span>
+                      <div className="flex items-center gap-3">
+                        <Badge variant="outline" className="text-xs font-black uppercase tracking-widest border-border/60">ID: {f.id}</Badge>
+                        <Badge variant="secondary" className="text-xs font-black uppercase tracking-[0.1em] bg-primary/10 text-primary border-none">Active Faculty</Badge>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openEditFaculty(f)}>
-                        <Pencil className="h-3 w-3" />
+                    <div className="flex items-center gap-2">
+                      <Button variant="ghost" size="icon" className="h-10 w-10 text-primary hover:bg-primary/10 rounded-xl" onClick={() => openEditFaculty(f)}>
+                        <Pencil className="h-5 w-5" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => confirmDeleteFaculty(f.id)}>
-                        <Trash2 className="h-3 w-3" />
+                      <Button variant="ghost" size="icon" className="h-10 w-10 text-destructive hover:bg-muted-destructive rounded-xl" onClick={() => confirmDeleteFaculty(f.id)}>
+                        <Trash2 className="h-5 w-5" />
                       </Button>
                     </div>
                   </div>
@@ -340,7 +529,7 @@ export default function DataInput() {
           <Card>
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-sm">Subjects ({data.subjects.length})</CardTitle>
+                <CardTitle className="text-base font-black uppercase tracking-widest">Subjects ({data.subjects.length})</CardTitle>
                 <CSVUpload label="CSV" onParse={(t) => {
                   const parsed = parseSubjectCSV(t);
                   dispatch({ type: 'SET_SUBJECTS', payload: [...data.subjects, ...parsed] });
@@ -350,32 +539,78 @@ export default function DataInput() {
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="grid grid-cols-2 gap-2">
-                <div><Label className="text-xs">Code</Label><Input value={subCode} onChange={(e) => setSubCode(e.target.value)} placeholder="CS101" className="h-8 text-sm" /></div>
-                <div><Label className="text-xs">Name</Label><Input value={subName} onChange={(e) => setSubName(e.target.value)} placeholder="Data Structures" className="h-8 text-sm" /></div>
+                <div><Label className="text-sm font-bold mb-1.5 block">Code</Label><Input value={subCode} onChange={(e) => setSubCode(e.target.value)} placeholder="CS101" className="h-8 text-sm" /></div>
+                <div><Label className="text-sm font-bold mb-1.5 block">Name</Label><Input value={subName} onChange={(e) => setSubName(e.target.value)} placeholder="Data Structures" className="h-8 text-sm" /></div>
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <Label className="text-xs">Faculty</Label>
+                  <Label className="text-sm font-bold mb-1.5 block">Faculty</Label>
                   <Select value={subFaculty} onValueChange={setSubFaculty}>
                     <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select" /></SelectTrigger>
                     <SelectContent>{data.faculty.map((f) => <SelectItem key={f.id} value={f.id}>{f.shortName}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
-                <div><Label className="text-xs">Year</Label><Input type="number" value={subYear} onChange={(e) => setSubYear(e.target.value)} min="1" max="4" className="h-8 text-sm" /></div>
+                <div><Label className="text-sm font-bold mb-1.5 block">Year</Label><Input type="number" value={subYear} onChange={(e) => setSubYear(e.target.value)} min="1" max="4" className="h-8 text-sm" /></div>
               </div>
+              <div className="grid grid-cols-2 gap-2 mt-2">
+                <div>
+                  <Label className="text-sm font-bold mb-1.5 block">Theory Hrs/Week</Label>
+                  <Input 
+                    type="number" 
+                    value={subHours} 
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setSubHours(val);
+                      if (parseFloat(val) > 0) setSubTheoryCredits('3.0');
+                      else setSubTheoryCredits('0');
+                    }} 
+                    min="0" 
+                    className="h-8 text-sm" 
+                  />
+                </div>
+                <div>
+                  <Label className="text-sm font-bold mb-1.5 block">Lab Sessions (2h each)</Label>
+                  <Input 
+                    type="number" 
+                    value={subLabHours} 
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setSubLabHours(val);
+                      if (parseFloat(val) > 0) {
+                        const th = parseFloat(subHours) || 0;
+                        setSubLabCredits(th > 0 ? '1.0' : '1.5');
+                      } else {
+                        setSubLabCredits('0');
+                      }
+                    }} 
+                    min="0" 
+                    className="h-8 text-sm" 
+                  />
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-2">
-                <div><Label className="text-xs">Theory Hours/Week</Label><Input type="number" value={subHours} onChange={(e) => setSubHours(e.target.value)} min="0" className="h-8 text-sm" /></div>
-                <div><Label className="text-xs">Lab Sessions (2 hrs each)</Label><Input type="number" value={subLabHours} onChange={(e) => setSubLabHours(e.target.value)} min="0" className="h-8 text-sm" /></div>
+                <div>
+                  <Label className="text-sm font-bold mb-1.5 block text-primary/80">Theory Credits</Label>
+                  <Input type="number" step="0.5" value={subTheoryCredits} onChange={(e) => setSubTheoryCredits(e.target.value)} min="0" className="h-8 text-sm border-primary/20" />
+                </div>
+                <div>
+                  <Label className="text-sm font-bold mb-1.5 block text-primary/80">Lab Credits</Label>
+                  <Input type="number" step="0.5" value={subLabCredits} onChange={(e) => setSubLabCredits(e.target.value)} min="0" className="h-8 text-sm border-primary/20" />
+                </div>
               </div>
               {data.faculty.length > 0 && (
-                <div>
-                  <Label className="text-xs">Additional Eligible Faculty (optional)</Label>
-                  <div className="flex flex-wrap gap-1 mt-1">
+                <div className="space-y-2">
+                  <Label className="text-sm font-black uppercase tracking-tight text-foreground/70">Additional Eligible Faculty (Click to Select)</Label>
+                  <div className="flex flex-wrap gap-2 p-3 bg-muted/30 rounded-2xl border border-border/40">
                     {data.faculty.filter(f => f.id !== subFaculty).map(f => (
                       <Badge
                         key={f.id}
                         variant={subEligibleFaculty.includes(f.id) ? 'default' : 'outline'}
-                        className="text-[10px] cursor-pointer"
+                        className={cn(
+                          "text-sm font-bold px-4 py-2 cursor-pointer transition-all uppercase tracking-tight",
+                          subEligibleFaculty.includes(f.id) ? "shadow-md shadow-primary/20 scale-105" : "hover:bg-muted/50"
+                        )}
                         onClick={() => toggleEligibleFaculty(f.id)}
                       >
                         {f.shortName}
@@ -385,25 +620,40 @@ export default function DataInput() {
                 </div>
               )}
               <Button size="sm" onClick={addSubject} className="w-full"><Plus className="h-3 w-3 mr-1" /> Add Subject</Button>
-              <div className="space-y-1 mt-2 max-h-40 overflow-auto">
+              <div className="space-y-3 mt-4 max-h-96 overflow-auto pr-2 custom-scrollbar">
                 {data.subjects.map((s) => (
-                  <div key={s.code} className="flex items-center justify-between p-2 bg-muted rounded text-xs">
-                    <div>
-                      <span className="font-semibold">{s.code}</span> — {s.name}
-                      <Badge variant="outline" className="ml-1 text-[10px]">{s.subjectType}</Badge>
-                      <span className="text-muted-foreground ml-1">Y{s.yearNumber} {s.weeklyHours}h/w</span>
-                      {s.eligibleFacultyIds.length > 1 && (
-                        <Badge variant="secondary" className="ml-1 text-[10px]">{s.eligibleFacultyIds.length} faculty</Badge>
-                      )}
+                  <div key={s.code} className="p-5 bg-muted/40 rounded-[2rem] border border-border/50 space-y-3 transition-all hover:bg-muted/60 hover:shadow-xl group">
+                    <div className="flex items-start justify-between">
+                      <div className="flex flex-col gap-1">
+                        <span className="text-xl font-black tracking-tighter text-foreground uppercase leading-tight group-hover:text-primary transition-colors">{s.code} — {s.name}</span>
+                        <div className="flex items-center gap-3">
+                          <Badge variant="outline" className="text-xs font-black uppercase tracking-widest border-primary/30 text-primary px-3 py-1 bg-primary/5">
+                            {s.credits === 2 ? "EMPLOYABILITY SKILLS" : (s.credits === 4 ? "INTEGRATED" : (s.credits && s.credits > 4 ? "(THEORY+LAB)" : s.subjectType))}
+                          </Badge>
+                          <Badge variant="secondary" className="text-xs font-black uppercase tracking-[0.1em] px-3 py-1">{s.weeklyHours}h/w</Badge>
+                          {s.credits !== undefined && <Badge variant="secondary" className="text-xs font-black uppercase tracking-[0.1em] px-3 py-1 bg-amber-500/10 text-amber-700 dark:text-amber-400">{s.credits} Credits</Badge>}
+                          <Badge variant="secondary" className="text-xs font-black uppercase tracking-[0.1em] px-3 py-1">Year {s.yearNumber}</Badge>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button variant="ghost" size="icon" className="h-10 w-10 text-primary hover:bg-primary/10 rounded-xl" onClick={() => openEditSubject(s)}>
+                          <Pencil className="h-5 w-5" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-10 w-10 text-destructive hover:bg-muted-destructive rounded-xl" onClick={() => dispatch({ type: 'REMOVE_SUBJECT', payload: s.code })}>
+                          <Trash2 className="h-5 w-5" />
+                        </Button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1">
-                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => openEditSubject(s)}>
-                        <Pencil className="h-3 w-3" />
-                      </Button>
-                      <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => dispatch({ type: 'REMOVE_SUBJECT', payload: s.code })}>
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    </div>
+                    {s.eligibleFacultyIds.length > 0 && (
+                      <div className="flex flex-wrap gap-2 items-center pt-2 border-t border-border/20">
+                        <span className="text-xs font-black text-muted-foreground uppercase tracking-[0.2em] mr-2">Assigned Faculty:</span>
+                        {s.eligibleFacultyIds.map(fid => (
+                          <Badge key={fid} variant="outline" className="text-xs font-bold px-3 py-1 border-border/60 bg-white/5 uppercase tracking-tight">
+                            {data.faculty.find(f => f.id === fid)?.shortName || fid}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -416,7 +666,7 @@ export default function DataInput() {
           <Card>
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-sm">Sections ({data.sections.length})</CardTitle>
+                <CardTitle className="text-base font-black uppercase tracking-widest">Sections ({data.sections.length})</CardTitle>
                 <CSVUpload label="CSV" onParse={(t) => {
                   const parsed = parseSectionCSV(t);
                   dispatch({ type: 'SET_SECTIONS', payload: [...data.sections, ...parsed] });
@@ -426,16 +676,25 @@ export default function DataInput() {
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="grid grid-cols-3 gap-2">
-                <div><Label className="text-xs">ID</Label><Input value={secId} onChange={(e) => setSecId(e.target.value)} placeholder="1A" className="h-8 text-sm" /></div>
-                <div><Label className="text-xs">Year</Label><Input type="number" value={secYear} onChange={(e) => setSecYear(e.target.value)} className="h-8 text-sm" /></div>
-                <div><Label className="text-xs">Name</Label><Input value={secName} onChange={(e) => setSecName(e.target.value)} placeholder="A" className="h-8 text-sm" /></div>
+                <div><Label className="text-sm font-bold mb-1.5 block">ID</Label><Input value={secId} onChange={(e) => setSecId(e.target.value)} placeholder="1A" className="h-8 text-sm" /></div>
+                <div><Label className="text-sm font-bold mb-1.5 block">Year</Label><Input type="number" value={secYear} onChange={(e) => setSecYear(e.target.value)} className="h-8 text-sm" /></div>
+                <div><Label className="text-sm font-bold mb-1.5 block">Name</Label><Input value={secName} onChange={(e) => setSecName(e.target.value)} placeholder="A" className="h-8 text-sm" /></div>
               </div>
               <Button size="sm" onClick={addSection} className="w-full"><Plus className="h-3 w-3 mr-1" /> Add Section</Button>
-              <div className="flex flex-wrap gap-1 mt-2">
+              <div className="flex flex-wrap gap-3 mt-4 max-h-96 overflow-auto">
                 {data.sections.map((s) => (
-                  <Badge key={s.id} variant="secondary" className="text-xs cursor-pointer" onClick={() => dispatch({ type: 'REMOVE_SECTION', payload: s.id })}>
-                    Y{s.yearNumber}-{s.name} <Trash2 className="h-2.5 w-2.5 ml-1" />
-                  </Badge>
+                  <div key={s.id} className="flex items-center justify-between p-4 bg-muted/40 rounded-[1.5rem] border border-border/50 transition-all hover:bg-muted/60 hover:shadow-lg w-full">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-xl font-black tracking-tighter text-foreground uppercase">{s.name}</span>
+                      <div className="flex gap-3">
+                        <Badge className="text-xs font-black uppercase tracking-widest bg-primary/10 text-primary border-none">Year {s.yearNumber}</Badge>
+                        <Badge variant="outline" className="text-xs font-black uppercase tracking-widest border-border/60">ID: {s.id}</Badge>
+                      </div>
+                    </div>
+                    <Button variant="ghost" size="icon" className="h-10 w-10 text-destructive hover:bg-destructive/10 rounded-xl" onClick={() => dispatch({ type: 'REMOVE_SECTION', payload: s.id })}>
+                      <Trash2 className="h-5 w-5" />
+                    </Button>
+                  </div>
                 ))}
               </div>
             </CardContent>
@@ -443,26 +702,26 @@ export default function DataInput() {
         </TabsContent>
 
         {/* LAB ROOMS */}
-        <TabsContent value="labs">
+        <TabsContent value="labRooms">
           <Card>
             <CardHeader className="pb-3">
-              <CardTitle className="text-sm">Lab Rooms ({data.labRooms.length})</CardTitle>
+              <CardTitle className="text-base font-black uppercase tracking-widest">Lab Rooms ({data.labRooms.length})</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="grid grid-cols-3 gap-2">
-                <div><Label className="text-xs">Lab ID</Label><Input value={labId} onChange={(e) => setLabId(e.target.value)} placeholder="LAB-1" className="h-8 text-sm" /></div>
-                <div><Label className="text-xs">Lab Name</Label><Input value={labName} onChange={(e) => setLabName(e.target.value)} placeholder="CS Lab 1" className="h-8 text-sm" /></div>
-                <div><Label className="text-xs">Capacity</Label><Input type="number" value={labCapacity} onChange={(e) => setLabCapacity(e.target.value)} className="h-8 text-sm" /></div>
+                <div><Label className="text-sm font-bold mb-1.5 block">Lab ID</Label><Input value={labId} onChange={(e) => setLabId(e.target.value)} placeholder="LAB-1" className="h-8 text-sm" /></div>
+                <div><Label className="text-sm font-bold mb-1.5 block">Lab Name</Label><Input value={labName} onChange={(e) => setLabName(e.target.value)} placeholder="CS Lab 1" className="h-8 text-sm" /></div>
+                <div><Label className="text-sm font-bold mb-1.5 block">Capacity</Label><Input type="number" value={labCapacity} onChange={(e) => setLabCapacity(e.target.value)} className="h-8 text-sm" /></div>
               </div>
               {data.subjects.filter(s => s.subjectType !== SubjectType.THEORY).length > 0 && (
                 <div>
-                  <Label className="text-xs">Subjects Assigned to This Lab</Label>
-                  <div className="flex flex-wrap gap-1 mt-1">
+                  <Label className="text-sm font-bold mb-1.5 block">Subjects Assigned to This Lab</Label>
+                  <div className="flex flex-wrap gap-2 mt-2">
                     {data.subjects.filter(s => s.subjectType !== SubjectType.THEORY).map(s => (
                       <Badge
                         key={s.code}
                         variant={labSubjects.includes(s.code) ? 'default' : 'outline'}
-                        className="text-[10px] cursor-pointer"
+                        className="text-sm font-bold px-3 py-1.5 cursor-pointer transition-all hover:scale-105 active:scale-95 uppercase tracking-tight shadow-sm"
                         onClick={() => toggleLabSubject(s.code)}
                       >
                         {s.code}
@@ -472,25 +731,34 @@ export default function DataInput() {
                 </div>
               )}
               <Button size="sm" onClick={addLabRoom} className="w-full"><Plus className="h-3 w-3 mr-1" /> Add Lab Room</Button>
-              <div className="space-y-1 mt-2 max-h-40 overflow-auto">
+              <div className="space-y-3 mt-4 max-h-96 overflow-auto custom-scrollbar">
                 {data.labRooms.map((lab) => (
-                  <div key={lab.id} className="flex items-center justify-between p-2 bg-muted rounded text-xs">
-                    <div>
-                      <span className="font-semibold">{lab.name}</span>
-                      <span className="text-muted-foreground ml-1">({lab.id})</span>
-                      <span className="text-muted-foreground ml-1">Cap: {lab.capacity}</span>
-                      {lab.subjectCodes.length > 0 && (
-                        <Badge variant="secondary" className="ml-1 text-[10px]">{lab.subjectCodes.length} subjects</Badge>
-                      )}
+                  <div key={lab.id} className="flex items-center justify-between p-5 bg-muted/40 rounded-[2rem] border border-border/50 group transition-all hover:bg-muted/60 hover:shadow-lg">
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center gap-3">
+                        <span className="text-xl font-black tracking-tighter text-foreground uppercase leading-tight group-hover:text-primary transition-colors">{lab.name}</span>
+                        <Badge variant="outline" className="text-xs font-black uppercase tracking-widest border-border/60">ID: {lab.id}</Badge>
+                      </div>
+                      <div className="flex items-center gap-3 mt-1">
+                        <Badge variant="outline" className="text-xs font-black uppercase tracking-widest border-amber-500/30 text-amber-600 bg-amber-500/5 px-3 py-1">Capacity: {lab.capacity}</Badge>
+                        {lab.subjectCodes.length > 0 && (
+                          <Badge variant="secondary" className="text-xs font-black uppercase tracking-widest bg-indigo-500/10 text-indigo-400 px-3 py-1 border-none">{lab.subjectCodes.length} Subjects Assigned</Badge>
+                        )}
+                      </div>
                     </div>
-                    <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive" onClick={() => dispatch({ type: 'REMOVE_LAB_ROOM', payload: lab.id })}>
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Button variant="ghost" size="icon" className="h-10 w-10 text-primary hover:bg-primary/10 rounded-xl group-hover:scale-110 transition-transform" onClick={() => openEditLab(lab)}>
+                        <Pencil className="h-5 w-5" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-10 w-10 text-destructive hover:bg-muted-destructive rounded-xl group-hover:scale-110 transition-transform" onClick={() => dispatch({ type: 'REMOVE_LAB_ROOM', payload: lab.id })}>
+                        <Trash2 className="h-5 w-5" />
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>
               {data.labRooms.length === 0 && (
-                <p className="text-[10px] text-muted-foreground">Add lab rooms to enable lab-aware scheduling. Each lab session will be assigned a specific room, and no two sessions can use the same room simultaneously.</p>
+                <p className="text-xs text-muted-foreground mt-2">Add lab rooms to enable lab-aware scheduling. Each lab session will be assigned a specific room, and no two sessions can use the same room simultaneously.</p>
               )}
             </CardContent>
           </Card>
@@ -501,7 +769,7 @@ export default function DataInput() {
           <Card>
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-sm">Fixed Classes ({data.fixedClasses.length})</CardTitle>
+                <CardTitle className="text-base font-black uppercase tracking-widest">Fixed Classes ({data.fixedClasses.length})</CardTitle>
                 <CSVUpload label="CSV" onParse={(t) => {
                   const parsed = parseFixedClassCSV(t);
                   dispatch({ type: 'SET_FIXED_CLASSES', payload: [...data.fixedClasses, ...parsed] });
@@ -512,14 +780,14 @@ export default function DataInput() {
             <CardContent className="space-y-3">
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <Label className="text-xs">Subject</Label>
+                  <Label className="text-sm font-bold mb-1.5 block">Subject</Label>
                   <Select value={fcSubject} onValueChange={setFcSubject}>
                     <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select" /></SelectTrigger>
                     <SelectContent>{data.subjects.map((s) => <SelectItem key={s.code} value={s.code}>{s.code}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
                 <div>
-                  <Label className="text-xs">Faculty</Label>
+                  <Label className="text-sm font-bold mb-1.5 block">Faculty</Label>
                   <Select value={fcFaculty} onValueChange={setFcFaculty}>
                     <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select" /></SelectTrigger>
                     <SelectContent>{data.faculty.map((f) => <SelectItem key={f.id} value={f.id}>{f.shortName}</SelectItem>)}</SelectContent>
@@ -527,16 +795,16 @@ export default function DataInput() {
                 </div>
               </div>
               <div className="grid grid-cols-3 gap-2">
-                <div><Label className="text-xs">Year</Label><Input type="number" value={fcYear} onChange={(e) => setFcYear(e.target.value)} className="h-8 text-sm" /></div>
+                <div><Label className="text-sm font-bold mb-1.5 block">Year</Label><Input type="number" value={fcYear} onChange={(e) => setFcYear(e.target.value)} className="h-8 text-sm" /></div>
                 <div>
-                  <Label className="text-xs">Section</Label>
+                  <Label className="text-sm font-bold mb-1.5 block">Section</Label>
                   <Select value={fcSection} onValueChange={setFcSection}>
                     <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Sec" /></SelectTrigger>
                     <SelectContent>{data.sections.filter(s => s.yearNumber === parseInt(fcYear)).map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
                 <div>
-                  <Label className="text-xs">Day</Label>
+                  <Label className="text-sm font-bold mb-1.5 block">Day</Label>
                   <Select value={fcDay} onValueChange={(v) => setFcDay(v as Day)}>
                     <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                     <SelectContent>{DAYS.map((d) => <SelectItem key={d} value={d}>{d.slice(0, 3)}</SelectItem>)}</SelectContent>
@@ -544,20 +812,32 @@ export default function DataInput() {
                 </div>
               </div>
               <div>
-                <Label className="text-xs">Slot</Label>
+                <Label className="text-sm font-bold mb-1.5 block">Slot</Label>
                 <Select value={fcSlot} onValueChange={setFcSlot}>
                   <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>{SLOT_DEFINITIONS.slice(0, 6).map((s) => <SelectItem key={s.slotIndex} value={String(s.slotIndex)}>{s.startTime}-{s.endTime}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <Button size="sm" onClick={addFixed} className="w-full"><Plus className="h-3 w-3 mr-1" /> Add Fixed Class</Button>
-              <div className="space-y-1 mt-2 max-h-32 overflow-auto">
+              <div className="space-y-3 mt-4 max-h-96 overflow-auto custom-scrollbar">
                 {data.fixedClasses.map((fc, i) => (
-                  <div key={i} className="flex items-center justify-between p-2 bg-muted rounded text-xs">
-                    <span>{fc.subjectCode} | {fc.day.slice(0, 3)} Slot {fc.slotIndex} | Sec {fc.sectionId}</span>
-                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => dispatch({ type: 'REMOVE_FIXED_CLASS', payload: i })}>
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
+                  <div key={i} className="flex items-center justify-between p-5 bg-muted/40 rounded-[1.5rem] border border-border/50 transition-all hover:bg-muted/60 hover:shadow-lg group">
+                    <div className="flex flex-col gap-1">
+                      <span className="text-xl font-black tracking-tighter text-foreground group-hover:text-primary transition-colors underline underline-offset-4 decoration-primary/30 uppercase">{fc.subjectCode} — Section {fc.sectionId}</span>
+                      <div className="flex items-center gap-3 mt-1">
+                        <Badge className="text-xs font-black uppercase tracking-widest bg-primary/10 text-primary border-none">{fc.day}</Badge>
+                        <Badge variant="outline" className="text-xs font-black uppercase tracking-widest border-border/60">Slot {fc.slotIndex}</Badge>
+                        <Badge variant="outline" className="text-xs font-black uppercase tracking-widest border-border/60">Year {fc.yearNumber}</Badge>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button variant="ghost" size="icon" className="h-10 w-10 text-primary hover:bg-primary/10 rounded-xl transition-all" onClick={() => openEditFixed(fc, i)}>
+                        <Pencil className="h-5 w-5" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-10 w-10 text-destructive hover:bg-muted-destructive rounded-xl transition-all" onClick={() => dispatch({ type: 'REMOVE_FIXED_CLASS', payload: i })}>
+                        <Trash2 className="h-5 w-5" />
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -570,7 +850,7 @@ export default function DataInput() {
           <Card>
             <CardHeader className="pb-3">
               <div className="flex items-center justify-between">
-                <CardTitle className="text-sm">Career Path ({data.careerPathClasses.length})</CardTitle>
+                <CardTitle className="text-base font-black uppercase tracking-widest">Career Path ({data.careerPathClasses.length})</CardTitle>
                 <CSVUpload label="CSV" onParse={(t) => {
                   const parsed = parseCareerPathCSV(t);
                   dispatch({ type: 'SET_CAREER_CLASSES', payload: [...data.careerPathClasses, ...parsed] });
@@ -579,28 +859,35 @@ export default function DataInput() {
               </div>
             </CardHeader>
             <CardContent className="space-y-3">
-              <div className="p-2 rounded bg-muted/50 text-[10px] text-muted-foreground">
+              <div className="p-2 rounded bg-muted/50 text-xs text-muted-foreground font-medium">
                 Career path classes are allowed only for <strong>3rd and 4th year</strong>. They are scheduled simultaneously across all sections of the selected year.
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <Label className="text-xs">Subject</Label>
-                  <Select value={cpSubject} onValueChange={setCpSubject}>
-                    <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select" /></SelectTrigger>
-                    <SelectContent>{data.subjects.map((s) => <SelectItem key={s.code} value={s.code}>{s.code}</SelectItem>)}</SelectContent>
-                  </Select>
+              <div className="space-y-2">
+                <Label className="text-sm font-black uppercase tracking-widest text-primary opacity-80">Select Careers Faculty (AI, Web, Cyber, Cloud)</Label>
+                <div className="flex flex-wrap gap-1.5 p-3 bg-muted/40 rounded-xl border border-border/50 max-h-40 overflow-auto custom-scrollbar shadow-inner">
+                  {data.faculty.map(f => (
+                    <Badge 
+                      key={f.id} 
+                      variant={cpFaculties.includes(f.id) ? "default" : "outline"}
+                      className={cn(
+                        "cursor-pointer text-[11px] font-black py-1.5 px-3 uppercase tracking-tighter transition-all hover:scale-105 active:scale-95",
+                        cpFaculties.includes(f.id) ? "bg-primary text-primary-foreground shadow-md" : "hover:bg-primary/10"
+                      )}
+                      onClick={() => toggleCpFaculty(f.id)}
+                    >
+                      {f.shortName}
+                    </Badge>
+                  ))}
                 </div>
-                <div>
-                  <Label className="text-xs">Faculty</Label>
-                  <Select value={cpFaculty} onValueChange={setCpFaculty}>
-                    <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select" /></SelectTrigger>
-                    <SelectContent>{data.faculty.map((f) => <SelectItem key={f.id} value={f.id}>{f.shortName}</SelectItem>)}</SelectContent>
-                  </Select>
-                </div>
+                {cpFaculties.length > 0 && (
+                  <div className="text-[10px] font-black uppercase text-primary tracking-widest px-1">
+                    Selected: {cpFaculties.map(fid => data.faculty.find(f => f.id === fid)?.shortName).join(', ')}
+                  </div>
+                )}
               </div>
               <div className="grid grid-cols-3 gap-2">
                 <div>
-                  <Label className="text-xs">Year</Label>
+                  <Label className="text-sm font-bold mb-1.5 block">Year</Label>
                   <Select value={cpYear} onValueChange={setCpYear}>
                     <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                     <SelectContent>
@@ -610,44 +897,68 @@ export default function DataInput() {
                   </Select>
                 </div>
                 <div>
-                  <Label className="text-xs">Day</Label>
+                  <Label className="text-sm font-bold mb-1.5 block">Day</Label>
                   <Select value={cpDay} onValueChange={(v) => setCpDay(v as Day)}>
                     <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                     <SelectContent>{DAYS.map((d) => <SelectItem key={d} value={d}>{d.slice(0, 3)}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
                 <div>
-                  <Label className="text-xs">Slot</Label>
+                  <Label className="text-sm font-bold mb-1.5 block">Slot</Label>
                   <Select value={cpSlot} onValueChange={setCpSlot}>
                     <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                     <SelectContent>{SLOT_DEFINITIONS.slice(0, 6).map((s) => <SelectItem key={s.slotIndex} value={String(s.slotIndex)}>{s.startTime}-{s.endTime}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
               </div>
-              <div>
-                <Label className="text-xs">Slot Type</Label>
-                <RadioGroup value={cpSlotType} onValueChange={(v) => setCpSlotType(v as 'theory' | 'lab')} className="flex gap-4 mt-1">
-                  <div className="flex items-center gap-1.5">
-                    <RadioGroupItem value="theory" id="cp-theory" />
-                    <Label htmlFor="cp-theory" className="text-xs">Theory</Label>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <RadioGroupItem value="lab" id="cp-lab" />
-                    <Label htmlFor="cp-lab" className="text-xs">Lab</Label>
-                  </div>
-                </RadioGroup>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label className="text-sm font-bold mb-1.5 block">Slot Type</Label>
+                  <RadioGroup value={cpSlotType} onValueChange={(v) => setCpSlotType(v as 'theory' | 'lab')} className="flex gap-4 mt-1">
+                    <div className="flex items-center gap-1.5">
+                      <RadioGroupItem value="theory" id="cp-theory" />
+                      <Label htmlFor="cp-theory" className="text-xs">Theory</Label>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <RadioGroupItem value="lab" id="cp-lab" />
+                      <Label htmlFor="cp-lab" className="text-xs">Lab</Label>
+                    </div>
+                  </RadioGroup>
+                </div>
+                <div>
+                  <Label className="text-sm font-black mb-1.5 block px-1 text-primary">Credits</Label>
+                  <Input type="number" step="0.5" value={cpCredits} onChange={(e) => setCpCredits(e.target.value)} min="0" max="5" className="h-9 text-base font-black border-primary/20" />
+                </div>
               </div>
               <Button size="sm" onClick={addCareer} className="w-full"><Plus className="h-3 w-3 mr-1" /> Add Career Path</Button>
-              <div className="space-y-1 mt-2 max-h-32 overflow-auto">
+              <div className="space-y-3 mt-4 max-h-96 overflow-auto custom-scrollbar">
                 {data.careerPathClasses.map((cp, i) => (
-                  <div key={i} className="flex items-center justify-between p-2 bg-muted rounded text-xs">
-                    <span>
-                      {cp.subjectCode} | Y{cp.yearNumber} | {cp.day.slice(0, 3)} Slot {cp.slotIndex}
-                      <Badge variant="outline" className="ml-1 text-[10px]">{cp.slotType}</Badge>
-                    </span>
-                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => dispatch({ type: 'REMOVE_CAREER_CLASS', payload: i })}>
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
+                  <div key={i} className="flex items-center justify-between p-5 bg-muted/40 rounded-[2rem] border border-border/50 transition-all hover:bg-muted/60 hover:shadow-lg group">
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center gap-3">
+                        <span className="text-xl font-black tracking-tighter text-foreground uppercase group-hover:text-primary transition-all">Year {cp.yearNumber} — {cp.subjectCode}</span>
+                        <Badge variant="outline" className="text-xs font-black uppercase tracking-widest border-primary/40 text-primary bg-primary/5 px-3 py-1">{cp.slotType}</Badge>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 mt-2">
+                        {cp.facultyIds?.map(fid => (
+                          <Badge key={fid} variant="secondary" className="text-[10px] font-black uppercase tracking-widest bg-slate-900/5 dark:bg-white/5 border border-border/50">
+                            {data.faculty.find(f => f.id === fid)?.shortName || fid}
+                          </Badge>
+                        ))}
+                      </div>
+                      <div className="flex items-center gap-3 mt-1">
+                        <Badge className="text-xs font-black uppercase tracking-widest bg-muted text-muted-foreground border-none px-3 py-1">{cp.day}</Badge>
+                        <Badge variant="outline" className="text-xs font-black uppercase tracking-widest border-border/60 px-3 py-1">Slot Index: {cp.slotIndex}</Badge>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button variant="ghost" size="icon" className="h-10 w-10 text-primary hover:bg-primary/10 rounded-xl transition-transform hover:scale-110" onClick={() => openEditCp(cp, i)}>
+                        <Pencil className="h-5 w-5" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-10 w-10 text-destructive hover:bg-muted-destructive rounded-xl transition-transform hover:scale-110" onClick={() => dispatch({ type: 'REMOVE_CAREER_CLASS', payload: i })}>
+                        <Trash2 className="h-5 w-5" />
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -665,12 +976,12 @@ export default function DataInput() {
           {editFac && (
             <div className="space-y-3">
               <div>
-                <Label className="text-xs">Faculty ID (read-only)</Label>
+                <Label className="text-sm font-bold mb-1.5 block">Faculty ID (e.g., 101)</Label>
                 <Input value={editFac.id} disabled className="h-8 text-sm bg-muted" />
               </div>
               <div>
-                <Label className="text-xs">Short Name</Label>
-                <Input value={editFacName} onChange={(e) => setEditFacName(e.target.value)} className="h-8 text-sm" />
+                <Label className="text-sm font-black mb-1.5 block px-1">Short Name (Ex: ABC)</Label>
+                <Input value={editFacName} onChange={(e) => setEditFacName(e.target.value)} className="h-10 text-base font-bold shadow-sm focus:ring-primary/20" />
               </div>
             </div>
           )}
@@ -699,38 +1010,232 @@ export default function DataInput() {
 
       {/* Subject Edit Dialog */}
       <Dialog open={editSubOpen} onOpenChange={setEditSubOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Edit Subject: {editSub?.code}</DialogTitle>
+            <DialogTitle className="text-xl font-black uppercase tracking-tight">Edit Subject: {editSub?.code}</DialogTitle>
           </DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <Label className="text-xs">Subject Name</Label>
-              <Input value={editSubName} onChange={e => setEditSubName(e.target.value)} className="h-8 text-sm" />
+            <div className="space-y-4">
+              <div>
+                <Label className="text-sm font-black mb-1.5 block px-1">Subject Name</Label>
+                <Input value={editSubName} onChange={e => setEditSubName(e.target.value)} className="h-11 text-lg font-black tracking-tight" />
+              </div>
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <Label className="text-sm font-black mb-1.5 block px-1">Theory Hrs/Week</Label>
+                  <Input type="number" value={editSubHours} onChange={e => setEditSubHours(e.target.value)} className="h-11 text-lg font-black" />
+                </div>
+                <div>
+                  <Label className="text-sm font-black mb-1.5 block px-1">Lab Sessions/Week</Label>
+                  <Input type="number" value={editSubLabHours} onChange={e => setEditSubLabHours(e.target.value)} className="h-11 text-lg font-black" />
+                </div>
+                <div>
+                  <Label className="text-sm font-black mb-1.5 block px-1">Theory Credits</Label>
+                  <Input type="number" step="0.5" value={editSubTheoryCredits} onChange={e => setEditSubTheoryCredits(e.target.value)} min="0" max="5" className="h-11 text-lg font-black" />
+                </div>
+                <div>
+                  <Label className="text-sm font-black mb-1.5 block px-1">Lab Credits</Label>
+                  <Input type="number" step="0.5" value={editSubLabCredits} onChange={e => setEditSubLabCredits(e.target.value)} min="0" max="5" className="h-11 text-lg font-black" />
+                </div>
+              </div>
+              <div>
+                <Label className="text-sm font-black mb-1.5 block px-1 text-primary">Assigned Faculty</Label>
+                <Select value={editSubFaculty} onValueChange={setEditSubFaculty}>
+                  <SelectTrigger className="h-11 text-base font-bold border-2 focus:ring-primary/20"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {data.faculty.map(f => (
+                      <SelectItem key={f.id} value={f.id} className="text-sm font-medium">{f.shortName} ({f.id})</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-[10px] font-black uppercase tracking-widest mb-1.5 block px-1 text-muted-foreground opacity-70">Eligible Faculty (Click to Toggle)</Label>
+              <div className="flex flex-wrap gap-1.5 p-3 bg-muted/40 rounded-xl border border-border/50 max-h-32 overflow-auto">
+                {data.faculty.map(f => (
+                  <Badge 
+                    key={f.id} 
+                    variant={editSubEligible.includes(f.id) ? "default" : "outline"}
+                    className="cursor-pointer text-[11px] font-bold py-1 px-2 uppercase tracking-tight transition-all"
+                    onClick={() => {
+                       setEditSubEligible(prev => 
+                         prev.includes(f.id) ? prev.filter(id => id !== f.id) : [...prev, f.id]
+                       )
+                    }}
+                  >
+                    {f.shortName}
+                  </Badge>
+                ))}
+              </div>
             </div>
-            <div>
-              <Label className="text-xs">Assigned Faculty</Label>
-              <Select value={editSubFaculty} onValueChange={setEditSubFaculty}>
-                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {data.faculty.map(f => (
-                    <SelectItem key={f.id} value={f.id}>{f.shortName} ({f.id})</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label className="text-xs">Year</Label>
-              <Input type="number" value={editSubYear} onChange={e => setEditSubYear(e.target.value)} min="1" max="4" className="h-8 text-sm" />
-            </div>
-            <p className="text-[10px] text-muted-foreground">Subject code cannot be changed. Faculty ID and year can be updated without deleting the subject.</p>
           </div>
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setEditSubOpen(false)}>Cancel</Button>
-            <Button size="sm" onClick={saveEditSubject}>Save</Button>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setEditSubOpen(false)} className="font-bold">Cancel</Button>
+            <Button onClick={saveEditSubject} className="font-bold">Save Changes</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Lab Room Edit Dialog */}
+      <Dialog open={editLabOpen} onOpenChange={setEditLabOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-black uppercase tracking-tight">Edit Lab Room</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <Label className="text-sm font-bold mb-1.5 block">Room Name</Label>
+              <Input value={editLabName} onChange={e => setEditLabName(e.target.value)} className="h-10 text-base font-medium" />
+            </div>
+            <div>
+              <Label className="text-sm font-bold mb-1.5 block">Capacity</Label>
+              <Input type="number" value={editLabCapacity} onChange={e => setEditLabCapacity(e.target.value)} className="h-10 text-base" />
+            </div>
+            <div>
+              <Label className="text-sm font-bold mb-1.5 block">Supported Subjects</Label>
+              <div className="flex flex-wrap gap-1.5 p-3 bg-muted/40 rounded-xl border border-border/50 max-h-32 overflow-auto">
+                {data.subjects.filter(s => s.labHours > 0).map(s => (
+                  <Badge 
+                    key={s.code} 
+                    variant={editLabSubs.includes(s.code) ? "default" : "outline"}
+                    className="cursor-pointer text-[11px] font-bold py-1 px-2 uppercase tracking-tight transition-all"
+                    onClick={() => {
+                       setEditLabSubs(prev => 
+                         prev.includes(s.code) ? prev.filter(c => c !== s.code) : [...prev, s.code]
+                       )
+                    }}
+                  >
+                    {s.code}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setEditLabOpen(false)} className="font-bold">Cancel</Button>
+            <Button onClick={saveEditLab} className="font-bold">Save Changes</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Fixed Class Edit Dialog */}
+      <Dialog open={editFixedOpen} onOpenChange={setEditFixedOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-black uppercase tracking-tight">Edit Fixed Class</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label className="text-sm font-bold mb-1.5 block">Subject</Label>
+                <Select value={editFixedSub} onValueChange={setEditFixedSub}>
+                  <SelectTrigger className="h-10 text-base"><SelectValue /></SelectTrigger>
+                  <SelectContent>{data.subjects.map(s => <SelectItem key={s.code} value={s.code}>{s.code}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-sm font-bold mb-1.5 block">Faculty</Label>
+                <Select value={editFixedFac} onValueChange={setEditFixedFac}>
+                  <SelectTrigger className="h-10 text-base"><SelectValue /></SelectTrigger>
+                  <SelectContent>{data.faculty.map(f => <SelectItem key={f.id} value={f.id}>{f.shortName}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label className="text-sm font-bold mb-1.5 block">Day</Label>
+                <Select value={editFixedDay} onValueChange={v => setEditFixedDay(v as Day)}>
+                  <SelectTrigger className="h-10 text-base"><SelectValue /></SelectTrigger>
+                  <SelectContent>{DAYS.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-sm font-bold mb-1.5 block">Slot</Label>
+                <Select value={editFixedSlot} onValueChange={setEditFixedSlot}>
+                  <SelectTrigger className="h-10 text-base"><SelectValue /></SelectTrigger>
+                  <SelectContent>{SLOT_DEFINITIONS.slice(0, 6).map(s => <SelectItem key={s.slotIndex} value={String(s.slotIndex)}>{s.startTime}-{s.endTime}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setEditFixedOpen(false)} className="font-bold">Cancel</Button>
+            <Button onClick={saveEditFixed} className="font-bold">Save Changes</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Career Path Edit Dialog */}
+      <Dialog open={editCpOpen} onOpenChange={setEditCpOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-black uppercase tracking-tight">Edit Career Path</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div>
+              <Label className="text-sm font-black mb-1.5 block px-1 uppercase tracking-widest text-primary opacity-80">Faculty Members</Label>
+              <div className="flex flex-wrap gap-1.5 p-3 bg-muted/40 rounded-xl border border-border/50 max-h-40 overflow-auto custom-scrollbar shadow-inner">
+                {data.faculty.map(f => (
+                  <Badge 
+                    key={f.id} 
+                    variant={editCpFaculties.includes(f.id) ? "default" : "outline"}
+                    className={cn(
+                      "cursor-pointer text-[11px] font-black py-1 px-2.5 uppercase tracking-tighter transition-all",
+                      editCpFaculties.includes(f.id) ? "bg-primary text-primary-foreground shadow-md" : "hover:bg-primary/10"
+                    )}
+                    onClick={() => {
+                        setEditCpFaculties(prev => 
+                          prev.includes(f.id) ? prev.filter(id => id !== f.id) : [...prev, f.id]
+                        )
+                    }}
+                  >
+                    {f.shortName}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label className="text-sm font-bold mb-1.5 block">Day</Label>
+                <Select value={editCpDay} onValueChange={v => setEditCpDay(v as Day)}>
+                  <SelectTrigger className="h-10 text-base"><SelectValue /></SelectTrigger>
+                  <SelectContent>{DAYS.map(d => <SelectItem key={d} value={d}>{d}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-sm font-bold mb-1.5 block">Slot</Label>
+                <Select value={editCpSlot} onValueChange={setEditCpSlot}>
+                  <SelectTrigger className="h-10 text-base"><SelectValue /></SelectTrigger>
+                  <SelectContent>{SLOT_DEFINITIONS.slice(0, 6).map(s => <SelectItem key={s.slotIndex} value={String(s.slotIndex)}>{s.startTime}-{s.endTime}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <Label className="text-sm font-bold mb-1.5 block">Slot Type</Label>
+                <RadioGroup value={editCpType} onValueChange={v => setEditCpType(v as 'theory' | 'lab')} className="flex gap-4 mt-2 p-3 bg-muted/40 rounded-xl border border-border/50 transition-all">
+                  <div className="flex items-center gap-2">
+                    <RadioGroupItem value="theory" id="edit-cp-theory" />
+                    <Label htmlFor="edit-cp-theory" className="text-sm font-bold uppercase tracking-tight">Theory</Label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <RadioGroupItem value="lab" id="edit-cp-lab" />
+                    <Label htmlFor="edit-cp-lab" className="text-sm font-bold uppercase tracking-tight">Lab (2hrs)</Label>
+                  </div>
+                </RadioGroup>
+              </div>
+              <div>
+                <Label className="text-sm font-black mb-1.5 block px-1 text-primary">Academic Credits</Label>
+                <Input type="number" step="0.5" value={editCpCredits} onChange={(e) => setEditCpCredits(e.target.value)} min="0" max="5" className="h-11 text-lg font-black border-primary/20" />
+              </div>
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setEditCpOpen(false)} className="font-bold">Cancel</Button>
+            <Button onClick={saveEditCp} className="font-bold">Save Changes</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
     </div>
   );
 }

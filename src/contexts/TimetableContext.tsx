@@ -35,7 +35,9 @@ type Action =
   | { type: 'REMOVE_CAREER_CLASS'; payload: number }
   | { type: 'SET_LAB_ROOMS'; payload: LabRoom[] }
   | { type: 'ADD_LAB_ROOM'; payload: LabRoom }
+  | { type: 'UPDATE_LAB_ROOM'; payload: LabRoom }
   | { type: 'REMOVE_LAB_ROOM'; payload: string }
+  | { type: 'UPDATE_CAREER_CLASS'; payload: { index: number; data: CareerPathClass } }
   | { type: 'SET_LAB_ROOM_MAPPINGS'; payload: LabRoomMapping[] }
   | { type: 'SET_FACULTY_SECTION_MAPPINGS'; payload: FacultySectionMapping[] }
   | { type: 'SET_TIMETABLE'; payload: ClassSession[] | null }
@@ -63,7 +65,9 @@ function reducer(state: TimetableData, action: Action): TimetableData {
     case 'REMOVE_CAREER_CLASS': return { ...state, careerPathClasses: state.careerPathClasses.filter((_, i) => i !== action.payload) };
     case 'SET_LAB_ROOMS': return { ...state, labRooms: action.payload };
     case 'ADD_LAB_ROOM': return { ...state, labRooms: [...state.labRooms, action.payload], generatedTimetable: null };
+    case 'UPDATE_LAB_ROOM': return { ...state, labRooms: state.labRooms.map(l => l.id === action.payload.id ? action.payload : l), generatedTimetable: null };
     case 'REMOVE_LAB_ROOM': return { ...state, labRooms: state.labRooms.filter(l => l.id !== action.payload), generatedTimetable: null };
+    case 'UPDATE_CAREER_CLASS': return { ...state, careerPathClasses: state.careerPathClasses.map((c, i) => i === action.payload.index ? action.payload.data : c), generatedTimetable: null };
     case 'SET_LAB_ROOM_MAPPINGS': return { ...state, labRoomMappings: action.payload };
     case 'SET_FACULTY_SECTION_MAPPINGS': return { ...state, facultySectionMappings: action.payload };
     case 'SET_TIMETABLE': return { ...state, generatedTimetable: action.payload };

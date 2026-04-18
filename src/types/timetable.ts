@@ -26,6 +26,9 @@ export interface Subject {
   subjectType: SubjectType;
   labHours: number;
   yearNumber: number;
+  credits?: number; // Academic credits (display only, does not affect scheduling)
+  theoryCredits?: number; // Theory portion of credits
+  labCredits?: number; // Lab portion of credits
   labRoomId?: string; // Which lab room this subject requires
 }
 
@@ -54,6 +57,8 @@ export interface ClassSession {
   isCareerPath: boolean;
   labRoomId?: string; // Assigned lab room for this session
   careerPathSlotType?: 'theory' | 'lab'; // Preserves the user-selected type for career path display
+  facultyIds?: string[]; // Multiple faculties for Career Path sessions
+  credits?: number; // Academic credits (used for Carrer Path sessions)
 }
 
 export interface FixedClass {
@@ -67,11 +72,12 @@ export interface FixedClass {
 
 export interface CareerPathClass {
   subjectCode: string;
-  facultyId: string;
+  facultyIds: string[]; // Support for multiple career path faculties (AI, Web, etc.)
   yearNumber: number; // Must be 3 or 4
   day: Day;
   slotIndex: number;
   slotType: 'theory' | 'lab'; // Whether this is a theory or lab career path session
+  credits?: number; // Academic credits for this session
 }
 
 export interface LabRoom {

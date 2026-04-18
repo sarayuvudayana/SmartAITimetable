@@ -28,8 +28,9 @@ export class TimeSlotManager {
   }
 
   getValidSlots(day: Day): TimeSlot[] {
-    const maxSlot =
-      this.allowOptionalSlot && this.optionalSlotDays.includes(day) ? 7 : 6;
+    // Strictly cap schedulable slots at 6 (index 0-5).
+    // The 16:00-17:00 slot (index 6) is reserved and must remain empty.
+    const maxSlot = 6; 
     return SLOT_DEFINITIONS
       .filter((s) => s.slotIndex < maxSlot)
       .map((s) => ({ ...s, day }));
@@ -56,7 +57,9 @@ export class TimeSlotManager {
     // Slots 3→4 cross lunch break, NOT consecutive
     if (
       (slotIndex1 === 3 && slotIndex2 === 4) ||
-      (slotIndex1 === 4 && slotIndex2 === 3)
+      (slotIndex1 === 4 && slotIndex2 === 3) ||
+      (slotIndex1 === 1 && slotIndex2 === 2) ||
+      (slotIndex1 === 2 && slotIndex2 === 1)
     ) {
       return false;
     }

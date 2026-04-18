@@ -1,0 +1,10 @@
+
+ RUN  v3.2.4 G:/6th sem/timtablegen2914
+
+ ✓ src/test/geneticAlgorithm.test.ts (8 tests) 19ms
+
+ Test Files  1 passed (1)
+      Tests  8 passed (8)
+   Start at  16:38:22
+   Duration  15.75s (transform 285ms, setup 219ms, collect 11.77s, tests 19ms, environment 2.20s, prepare 271ms)
+

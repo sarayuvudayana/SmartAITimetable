@@ -3,13 +3,21 @@ import { useTimetable } from '@/contexts/TimetableContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
+import { Badge } from '@/components/ui/badge';
 import { toast } from '@/hooks/use-toast';
-import { Play, RotateCcw, AlertCircle, CheckCircle } from 'lucide-react';
+import { Play, Square, AlertCircle, CheckCircle2, Database, Zap, Cpu, RotateCcw } from 'lucide-react';
 import { TimeSlotManager } from '@/core/timeSlotManager';
 import { ConstraintEngine } from '@/core/constraintEngine';
 import { GeneticAlgorithm, GAResult } from '@/core/geneticAlgorithm';
 import { buildFacultySectionMappings } from '@/core/facultySectionAssigner';
-import { Subject, SubjectType, LabRoomMapping } from '@/types/timetable';
+import { Subject, SubjectType, LabRoomMapping, ClassSession } from '@/types/timetable';
+import GAWorker from '@/workers/gaWorker?worker';
+import { Sparkles, Calculator, Loader2, Wand2, ShieldCheck } from 'lucide-react';
+import { callGroqApi } from '@/services/aiService';
+import { SYSTEM_PROMPT, buildOptimizationPrompt } from '@/core/aiPrompt';
+import { summarizeTimetable, parseAiSwaps, applyAiSwaps } from '@/core/aiOptimizer';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 /** Build lab-room-to-section mappings for lab/integrated subjects before generation */
 function buildLabRoomMappings(
@@ -53,9 +61,12 @@ function buildLabRoomMappings(
 export default function Generate() {
   const { data, dispatch } = useTimetable();
   const [running, setRunning] = useState(false);
+  const [aiRunning, setAiRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [result, setResult] = useState<GAResult | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
+  const [apiKey, setApiKey] = useState('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'); // Pre-filled with user key for convenience
+  const [aiOptimized, setAiOptimized] = useState(false);
 
   const validate = useCallback(() => {
     const errs: string[] = [];
@@ -85,6 +96,13 @@ export default function Generate() {
     return errs;
   }, [data]);
 
+  const reset = () => {
+    dispatch({ type: 'SET_TIMETABLE', payload: null });
+    setResult(null);
+    setProgress(0);
+    setErrors([]);
+  };
+
   const generate = useCallback(() => {
     const errs = validate();
     if (errs.length > 0) {
@@ -96,57 +114,114 @@ export default function Generate() {
     setProgress(0);
     setResult(null);
 
-    setTimeout(() => {
-      try {
-        const tsm = new TimeSlotManager();
+    // Build immutable faculty-section mappings
+    const mappings = buildFacultySectionMappings(data.subjects, data.sections);
+    dispatch({ type: 'SET_FACULTY_SECTION_MAPPINGS', payload: mappings });
 
-        // Build immutable faculty-section mappings
-        const mappings = buildFacultySectionMappings(data.subjects, data.sections);
-        dispatch({ type: 'SET_FACULTY_SECTION_MAPPINGS', payload: mappings });
+    // Build lab room mappings
+    const labMappings = buildLabRoomMappings(data.subjects, data.sections, data.labRooms);
+    dispatch({ type: 'SET_LAB_ROOM_MAPPINGS', payload: labMappings });
 
-        // Build lab room mappings
-        const labMappings = buildLabRoomMappings(data.subjects, data.sections, data.labRooms);
-        dispatch({ type: 'SET_LAB_ROOM_MAPPINGS', payload: labMappings });
+    // Instantiate and run GA in a Web Worker
+    const worker = new GAWorker();
 
-        const ce = new ConstraintEngine(tsm, data.subjects, mappings, data.labRooms, labMappings);
-
-        const ga = new GeneticAlgorithm(
-          ce, tsm, data.subjects, data.sections,
-          data.fixedClasses, data.careerPathClasses, mappings,
-          data.labRooms, labMappings,
-        );
-
-        const res = ga.run((gen, fitness) => {
-          setProgress(Math.min((gen / 500) * 100, 99));
-        });
-
-        setResult(res);
-        setProgress(100);
-        dispatch({ type: 'SET_TIMETABLE', payload: res.timetable });
-
-        if (res.converged) {
-          toast({ title: 'Perfect timetable generated!', description: `Converged at generation ${res.generation}` });
-        } else {
-          toast({ title: 'Best timetable found', description: `Fitness: ${res.fitness} (lower is better)` });
-        }
-      } catch (err: any) {
-        toast({ title: 'Generation failed', description: err.message, variant: 'destructive' });
-      } finally {
-        setRunning(false);
+    worker.postMessage({
+      subjects: data.subjects,
+      sections: data.sections,
+      fixedClasses: data.fixedClasses,
+      careerPathClasses: data.careerPathClasses,
+      facultyMappings: mappings,
+      labRooms: data.labRooms,
+      labRoomMappings: labMappings,
+      config: {
+        populationSize: 60,
+        maxGenerations: 500,
+        mutationRate: 0.2
       }
-    }, 50);
-  }, [data, validate, dispatch]);
+    });
 
-  const reset = () => {
-    dispatch({ type: 'SET_TIMETABLE', payload: null });
-    setResult(null);
-    setProgress(0);
-    setErrors([]);
+    worker.onmessage = (e) => {
+      const { type, gen, fitness, result, message } = e.data;
+      if (type === 'progress') {
+        setProgress(Math.min((gen / 500) * 100, 99.9));
+      } else if (type === 'result') {
+        setResult(result);
+        setProgress(100);
+        
+        const finalTimetable = result.timetable;
+        dispatch({ type: 'SET_TIMETABLE', payload: finalTimetable });
+        setRunning(false);
+        worker.terminate();
+
+        if (apiKey) {
+          runAiRefinement(finalTimetable);
+        } else if (result.converged) {
+          toast({ title: 'Perfect timetable generated!', description: `Converged at generation ${result.generation}` });
+        } else {
+          toast({ title: 'Best timetable found', description: `Fitness: ${result.fitness} (lower is better)` });
+        }
+      } else if (type === 'error') {
+        toast({ title: 'Generation failed', description: message, variant: 'destructive' });
+        setRunning(false);
+        worker.terminate();
+      }
+    };
+
+    worker.onerror = (err) => {
+      console.error('Worker error:', err);
+      toast({ title: 'Worker error', description: 'Timetable generation encountered a technical issue.', variant: 'destructive' });
+      setRunning(false);
+      worker.terminate();
+    };
+  }, [data, validate, dispatch, apiKey]);
+
+  const runAiRefinement = async (initialTimetable: ClassSession[]) => {
+    if (!apiKey) return;
+    setAiRunning(true);
+    setAiOptimized(false);
+    
+    try {
+      const summary = summarizeTimetable({ ...data, generatedTimetable: initialTimetable });
+      const prompt = buildOptimizationPrompt(summary);
+      
+      const aiResponse = await callGroqApi(apiKey, prompt, SYSTEM_PROMPT);
+      const swaps = parseAiSwaps(aiResponse);
+      
+      if (swaps.length > 0) {
+        const engine = new ConstraintEngine(
+          new TimeSlotManager(),
+          data.subjects,
+          data.facultySectionMappings,
+          data.labRooms,
+          data.labRoomMappings
+        );
+        
+        const optimized = applyAiSwaps(initialTimetable, swaps, engine);
+        dispatch({ type: 'SET_TIMETABLE', payload: optimized });
+        setAiOptimized(true);
+        
+        const reasons = swaps.map(s => s.reason).join(' • ');
+        toast({ 
+          title: 'AI Enhancement Success', 
+          description: `Swaps applied: ${reasons.substring(0, 100)}${reasons.length > 100 ? '...' : ''}` 
+        });
+      } else {
+        toast({ title: 'AI Review Complete', description: 'Your timetable is already highly optimized!' });
+      }
+    } catch (err: any) {
+      console.error(err);
+      toast({ title: 'AI Refinement failed', description: err.message, variant: 'destructive' });
+    } finally {
+      setAiRunning(false);
+    }
   };
 
   return (
-    <div className="p-4 space-y-4 animate-fade-in">
-      <h1 className="text-xl font-bold">Generate Timetable</h1>
+    <div className="p-6 space-y-8 animate-fade-in max-w-4xl mx-auto pb-24">
+      <div>
+        <h1 className="text-3xl font-black text-foreground tracking-tight">Generate Timetable</h1>
+        <p className="text-sm text-muted-foreground mt-1 font-medium italic">Powered by Intelligent Genetic Optimization</p>
+      </div>
 
       {errors.length > 0 && (
         <Card className="border-destructive">
@@ -160,43 +235,131 @@ export default function Generate() {
         </Card>
       )}
 
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm">Input Summary</CardTitle>
-        </CardHeader>
-        <CardContent className="text-xs text-muted-foreground space-y-1">
-          <p>Faculty: {data.faculty.length} | Subjects: {data.subjects.length} | Sections: {data.sections.length}</p>
-          <p>Fixed: {data.fixedClasses.length} | Career Path: {data.careerPathClasses.length} | Lab Rooms: {data.labRooms.length}</p>
-        </CardContent>
-      </Card>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <Card className="border-2 border-slate-900/5 dark:border-white/5 shadow-xl">
+          <CardHeader className="pb-3 border-b border-border/60 mb-4">
+            <CardTitle className="text-base font-black flex items-center gap-2 uppercase tracking-widest">
+              <Database className="h-5 w-5 text-primary" /> Configuration Summary
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex justify-between items-center p-3 rounded-xl bg-muted/50">
+              <span className="text-sm font-bold text-muted-foreground uppercase tracking-widest">Faculty</span>
+              <Badge className="font-black">{data.faculty.length}</Badge>
+            </div>
+            <div className="flex justify-between items-center p-3 rounded-xl bg-muted/50">
+              <span className="text-sm font-bold text-muted-foreground uppercase tracking-widest">Subjects</span>
+              <Badge className="font-black">{data.subjects.length}</Badge>
+            </div>
+            <div className="flex justify-between items-center p-3 rounded-xl bg-muted/50">
+              <span className="text-sm font-bold text-muted-foreground uppercase tracking-widest">Sections</span>
+              <Badge className="font-black">{data.sections.length}</Badge>
+            </div>
+            <div className="flex justify-between items-center p-3 rounded-xl bg-muted/50">
+              <span className="text-sm font-bold text-muted-foreground uppercase tracking-widest">Fixed Classes</span>
+              <Badge className="font-black">{data.fixedClasses.length}</Badge>
+            </div>
+            <div className="flex justify-between items-center p-3 rounded-xl bg-muted/50">
+              <span className="text-sm font-bold text-muted-foreground uppercase tracking-widest">Career Paths</span>
+              <Badge className="font-black">{data.careerPathClasses.length}</Badge>
+            </div>
+            <div className="flex justify-between items-center p-3 rounded-xl bg-muted/50">
+              <span className="text-sm font-bold text-muted-foreground uppercase tracking-widest">Lab Rooms</span>
+              <Badge className="font-black">{data.labRooms.length}</Badge>
+            </div>
+          </CardContent>
+        </Card>
 
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm">Genetic Algorithm</CardTitle>
+        <Card className="border-2 border-slate-900/5 dark:border-white/5 shadow-xl">
+          <CardHeader className="pb-3 border-b border-border/60 mb-4">
+            <CardTitle className="text-base font-black flex items-center gap-2 uppercase tracking-widest">
+              <Zap className="h-5 w-5 text-amber-500" /> Active Constraints
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {[
+              'Faculty Availability',
+              'Section Conflicts',
+              'Lab Room Requirements',
+              'Integrated Lab Continuity',
+              'Break/Lunch Guardrails',
+              'No back-to-back faculty classes',
+              'First-hour subject diversity',
+              'Leisure only at 12:10–1:10 or 3:00–4:00',
+              'Max 1 leisure/day',
+              'No leisure at first period or after lunch',
+              'Break: 11:00–11:10 (fixed)'
+            ].map(c => (
+              <div key={c} className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                <div className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                {c}
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className="border-2 border-slate-900/5 dark:border-white/5 shadow-xl">
+        <CardHeader className="pb-3 border-b border-border/60 mb-4">
+          <CardTitle className="text-base font-black flex items-center gap-2 uppercase tracking-widest">
+            <Cpu className="h-5 w-5 text-blue-500" /> Genetic Algorithm Parameters
+          </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="text-xs text-muted-foreground">
-            Population: 60 | Max Generations: 500 | Mutation Rate: 20%
-          </div>
-          <div className="text-[10px] text-muted-foreground space-y-0.5">
-            <p className="font-semibold">Hard Constraints:</p>
-            <p>• No faculty conflicts • No back-to-back faculty classes • First-hour subject diversity</p>
-            <p>• Lab strict 2-hour continuity • Lab room clash prevention • Career path sync (year-specific)</p>
-            <p>• Leisure only at 12:10–1:10 or 3:00–4:00 • Max 1 leisure/day • No leisure at first period or after lunch</p>
-            <p>• Break: 11:00–11:10 (fixed)</p>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-3 gap-4 text-sm font-medium text-muted-foreground">
+            <div className="flex flex-col items-center p-3 rounded-xl bg-muted/50">
+              <span className="text-xs uppercase tracking-widest">Population Size</span>
+              <Badge className="mt-1 font-black text-base">60</Badge>
+            </div>
+            <div className="flex flex-col items-center p-3 rounded-xl bg-muted/50">
+              <span className="text-xs uppercase tracking-widest">Max Generations</span>
+              <Badge className="mt-1 font-black text-base">500</Badge>
+            </div>
+            <div className="flex flex-col items-center p-3 rounded-xl bg-muted/50">
+              <span className="text-xs uppercase tracking-widest">Mutation Rate</span>
+              <Badge className="mt-1 font-black text-base">20%</Badge>
+            </div>
           </div>
 
           {running && (
-            <div className="space-y-2">
-              <Progress value={progress} className="h-2" />
-              <p className="text-xs text-muted-foreground text-center">Optimising... {Math.round(progress)}%</p>
+            <div className="py-8 flex flex-col items-center justify-center space-y-6 animate-in fade-in zoom-in duration-500">
+              <div className="relative w-32 h-32 flex items-center justify-center">
+                <div className="absolute inset-0 rounded-full border-4 border-dashed border-primary/30 animate-spin transition-all duration-1000" style={{ animationDuration: '6s' }}></div>
+                <div className="absolute inset-2 rounded-full border-2 border-dashed border-accent/40 animate-spin-reverse" style={{ animationDuration: '4s' }}></div>
+
+                <div className="z-10 bg-background p-4 rounded-xl shadow-xl flex items-center justify-center border-2 border-primary/20 animate-bounce">
+                  <Sparkles className="h-10 w-10 text-yellow-500 animate-pulse" />
+                </div>
+
+                <div className="absolute -top-2 -right-2 bg-blue-500 p-1.5 rounded-lg shadow-lg animate-bounce" style={{ animationDelay: '0.2s' }}>
+                  <Cpu className="h-5 w-5 text-white" />
+                </div>
+                <div className="absolute -bottom-1 -left-1 bg-purple-500 p-1.5 rounded-lg shadow-lg animate-bounce" style={{ animationDelay: '0.4s' }}>
+                  <Calculator className="h-4 w-4 text-white" />
+                </div>
+                <div className="absolute top-1/2 -left-4 -translate-y-1/2 bg-amber-500 p-1.5 rounded-lg shadow-lg animate-pulse">
+                  <Zap className="h-4 w-4 text-white" />
+                </div>
+              </div>
+
+              <div className="w-full space-y-3 px-4">
+                <div className="flex justify-between text-[10px] font-medium text-muted-foreground uppercase tracking-wider italic">
+                  <span>Simulating DNA...</span>
+                  <span>{Math.round(progress)}%</span>
+                </div>
+                <Progress value={progress} className="h-2.5 bg-secondary/50" />
+                <div className="flex items-center justify-center gap-2 text-xs text-primary font-medium">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Generating the best schedule for you...
+                </div>
+              </div>
             </div>
           )}
 
           {result && (
             <div className={`p-3 rounded text-xs ${result.converged ? 'bg-primary/10 text-primary' : 'bg-accent/15 text-accent-foreground'}`}>
               <div className="flex items-center gap-2 font-semibold">
-                <CheckCircle className="h-4 w-4" />
+                <CheckCircle2 className="h-4 w-4" />
                 {result.converged ? 'Perfect Solution Found' : 'Best Solution Found'}
               </div>
               <p className="mt-1">Generation: {result.generation} | Fitness: {result.fitness}</p>
@@ -204,13 +367,45 @@ export default function Generate() {
             </div>
           )}
 
-          <div className="flex gap-2">
-            <Button onClick={generate} disabled={running} className="flex-1">
-              <Play className="h-4 w-4 mr-1" /> {running ? 'Running...' : 'Generate'}
-            </Button>
-            <Button variant="outline" onClick={reset} disabled={running}>
-              <RotateCcw className="h-4 w-4" />
-            </Button>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
+                 <ShieldCheck className="h-3 w-3" /> Groq API Key (Llama-3 Optimization)
+              </Label>
+              <Input 
+                type="password" 
+                placeholder="gsk_..." 
+                value={apiKey} 
+                onChange={(e) => setApiKey(e.target.value)}
+                className="h-10 font-mono text-xs bg-muted/30 border-2 focus-visible:ring-primary/20"
+              />
+            </div>
+
+            {aiRunning && (
+              <div className="p-4 rounded-xl bg-primary/5 border-2 border-primary/20 flex items-center gap-4 animate-pulse">
+                <Wand2 className="h-8 w-8 text-primary animate-spin" />
+                <div>
+                  <div className="text-sm font-black text-primary uppercase tracking-tighter">AI Refinement in Progress</div>
+                  <div className="text-[10px] font-bold text-muted-foreground italic">Analyzing faculty workloads and section density...</div>
+                </div>
+              </div>
+            )}
+
+            {aiOptimized && (
+              <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 flex items-center gap-3">
+                <Sparkles className="h-5 w-5" />
+                <span className="text-xs font-black uppercase tracking-tight">AI Optimization Applied</span>
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              <Button onClick={generate} disabled={running || aiRunning} className="flex-1 bg-slate-950 font-black tracking-widest uppercase text-xs h-12">
+                <Play className="h-4 w-4 mr-2" /> {running ? 'GA Running...' : (aiRunning ? 'AI Refining...' : 'Generate with AI')}
+              </Button>
+              <Button variant="outline" onClick={reset} disabled={running || aiRunning} className="h-12 w-12 border-2 group hover:border-primary/50">
+                <RotateCcw className="h-5 w-5 group-hover:rotate-180 transition-transform duration-500" />
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>

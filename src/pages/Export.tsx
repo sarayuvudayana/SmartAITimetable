@@ -2,10 +2,12 @@ import React from 'react';
 import { useTimetable } from '@/contexts/TimetableContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { FileSpreadsheet, Printer, RotateCcw, Users, FileText } from 'lucide-react';
+import { FileSpreadsheet, Printer, RotateCcw, Users, FileText, Building2 } from 'lucide-react';
 import { exportToCSV, downloadFile, printTimetable } from '@/utils/exportUtils';
 import { exportFacultyToCSV } from '@/utils/facultyExportUtils';
 import { exportFacultyTimetablePdf } from '@/utils/facultyPdfExport';
+import { exportLabTimetablePdf } from '@/utils/labPdfExport';
+import { exportLabToCSV } from '@/utils/labExportUtils';
 import { toast } from '@/hooks/use-toast';
 
 export default function ExportPage() {
@@ -37,6 +39,19 @@ export default function ExportPage() {
     toast({ title: 'Faculty timetable CSV exported' });
   };
 
+  const handleLabCSV = () => {
+    if (!data.generatedTimetable) return;
+    const csv = exportLabToCSV({
+      sessions: data.generatedTimetable,
+      faculty: data.faculty,
+      subjects: data.subjects,
+      sections: data.sections,
+      labRooms: data.labRooms,
+    });
+    downloadFile(csv, 'lab-timetable.csv', 'text/csv');
+    toast({ title: 'Lab Room timetable CSV exported' });
+  };
+
   const handleFacultyPdf = () => {
     if (!data.generatedTimetable) return;
     exportFacultyTimetablePdf({
@@ -46,6 +61,18 @@ export default function ExportPage() {
       sections: data.sections,
     });
     toast({ title: 'Faculty timetable PDF opened for print' });
+  };
+
+  const handleLabPdf = () => {
+    if (!data.generatedTimetable) return;
+    exportLabTimetablePdf({
+      sessions: data.generatedTimetable,
+      faculty: data.faculty,
+      subjects: data.subjects,
+      sections: data.sections,
+      labRooms: data.labRooms,
+    });
+    toast({ title: 'Lab Room PDF opened for print' });
   };
 
   const handlePrint = () => {
@@ -64,56 +91,84 @@ export default function ExportPage() {
   };
 
   return (
-    <div className="p-4 space-y-4 animate-fade-in">
-      <h1 className="text-xl font-bold">Export & Tools</h1>
+    <div className="p-6 space-y-8 animate-fade-in max-w-4xl mx-auto pb-24">
+      <div>
+        <h1 className="text-3xl font-black text-foreground tracking-tight">Export & Distribution</h1>
+        <p className="text-sm text-muted-foreground mt-1 font-medium italic">Generate professional documents for faculty and students</p>
+      </div>
 
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm">Export Section Timetable</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {!hasTable && (
-            <p className="text-xs text-muted-foreground">Generate a timetable first to enable exports.</p>
-          )}
-          <Button onClick={handleCSV} disabled={!hasTable} className="w-full" variant="outline">
-            <FileSpreadsheet className="h-4 w-4 mr-2" /> Export Sections as CSV
-          </Button>
-          <Button onClick={handlePrint} disabled={!hasTable} className="w-full" variant="outline">
-            <Printer className="h-4 w-4 mr-2" /> Print / Save as PDF
-          </Button>
-        </CardContent>
-      </Card>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+        <Card className="border-2 border-slate-900/5 dark:border-white/5 shadow-xl hover:border-primary/20 transition-all group">
+          <CardHeader>
+            <CardTitle className="text-lg font-black flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary group-hover:scale-110 transition-transform">
+                <FileSpreadsheet className="h-6 w-6" />
+              </div>
+              Dataset Export
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground leading-relaxed font-medium">
+              Download the complete timetable dataset in CSV format for analysis or system integration.
+            </p>
+            <div className="space-y-2">
+              <Button onClick={handleCSV} disabled={!hasTable} className="w-full font-bold uppercase tracking-widest h-11">
+                <FileSpreadsheet className="h-4 w-4 mr-2" /> Sections CSV
+              </Button>
+              <Button onClick={handleFacultyCSV} disabled={!hasTable} className="w-full font-bold uppercase tracking-widest h-11" variant="outline">
+                <Users className="h-4 w-4 mr-2" /> Faculty CSV
+              </Button>
+              <Button onClick={handleLabCSV} disabled={!hasTable} className="w-full font-bold uppercase tracking-widest h-11" variant="secondary">
+                <Building2 className="h-4 w-4 mr-2" /> Lab Room CSV
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
 
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm">Export Faculty Timetable</CardTitle>
+        <Card className="border-2 border-slate-900/5 dark:border-white/5 shadow-xl hover:border-primary/20 transition-all group">
+          <CardHeader>
+            <CardTitle className="text-lg font-black flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary group-hover:scale-110 transition-transform">
+                <FileText className="h-6 w-6" />
+              </div>
+              Print Documents
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground leading-relaxed font-medium">
+              Generate print-ready PDF documents for all sections and individual faculty workloads.
+            </p>
+            <div className="space-y-2">
+              <Button onClick={handlePrint} disabled={!hasTable} className="w-full font-bold uppercase tracking-widest h-11">
+                <Printer className="h-4 w-4 mr-2" /> Section PDFs
+              </Button>
+              <Button onClick={handleFacultyPdf} disabled={!hasTable} className="w-full font-bold uppercase tracking-widest h-11" variant="outline">
+                <FileText className="h-4 w-4 mr-2" /> Faculty PDFs
+              </Button>
+              <Button onClick={handleLabPdf} disabled={!hasTable} className="w-full font-bold uppercase tracking-widest h-11" variant="secondary">
+                <Building2 className="h-4 w-4 mr-2" /> Lab Room PDFs
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Card className="border-2 border-destructive/20 shadow-lg bg-destructive/5">
+        <CardHeader className="pb-3 border-b border-destructive/10">
+          <CardTitle className="text-sm font-black text-destructive uppercase tracking-[0.2em] flex items-center gap-2">
+            <RotateCcw className="h-4 w-4" /> System Reset
+          </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3">
-          {!hasTable && (
-            <p className="text-xs text-muted-foreground">Generate a timetable first to enable exports.</p>
-          )}
-          <Button onClick={handleFacultyCSV} disabled={!hasTable} className="w-full" variant="outline">
-            <Users className="h-4 w-4 mr-2" /> Export Faculty Timetables as CSV
-          </Button>
-          <Button onClick={handleFacultyPdf} disabled={!hasTable} className="w-full" variant="outline">
-            <FileText className="h-4 w-4 mr-2" /> Print / Save Faculty PDF
-          </Button>
-          <p className="text-[10px] text-muted-foreground">
-            Includes: Day, Time Slot, Subject Code, Section, LAB/THEORY indication, Lunch break.
+        <CardContent className="pt-4">
+          <p className="text-xs text-destructive/70 mb-4 font-bold">
+            CAUTION: This will permanently delete all uploaded faculty, subjects, and generated timetables.
           </p>
-        </CardContent>
-      </Card>
-
-      <Card className="border-destructive/30">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-sm text-destructive">Danger Zone</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Button variant="destructive" onClick={handleReset} className="w-full">
-            <RotateCcw className="h-4 w-4 mr-2" /> Reset All Data
+          <Button variant="destructive" onClick={handleReset} className="w-full font-bold uppercase tracking-widest shadow-lg shadow-destructive/20">
+            Clear All Application Data
           </Button>
         </CardContent>
       </Card>
     </div>
   );
 }
+

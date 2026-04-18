@@ -11,9 +11,13 @@ import DataInput from "./pages/DataInput";
 import Generate from "./pages/Generate";
 import ViewTimetable from "./pages/ViewTimetable";
 import FacultyTimetable from "./pages/FacultyTimetable";
+import LabTimetable from "./pages/LabTimetable";
 import ExportPage from "./pages/Export";
 import Login from "./pages/Login";
 import Signup from "./pages/Signup";
+import Profile from "./pages/Profile";
+import AboutUs from "./pages/AboutUs";
+import AboutGMRIT from "./pages/AboutGMRIT";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -49,7 +53,11 @@ const App = () => (
                 <Route path="/generate" element={<Generate />} />
                 <Route path="/view" element={<ViewTimetable />} />
                 <Route path="/faculty-view" element={<FacultyTimetable />} />
+                <Route path="/lab-view" element={<LabTimetable />} />
                 <Route path="/export" element={<ExportPage />} />
+                <Route path="/profile" element={<Profile />} />
+                <Route path="/about" element={<AboutUs />} />
+                <Route path="/about-gmrit" element={<AboutGMRIT />} />
               </Route>
               <Route path="*" element={<NotFound />} />
             </Routes>

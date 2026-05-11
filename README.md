@@ -1,73 +1,200 @@
-# Welcome to your Lovable project
+# AI Smart Timetable Generator and Optimizer
 
-## Project info
+## Overview
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+AI Smart Timetable Generator and Optimizer is a modern web application designed to automatically generate optimized and conflict-free academic timetables using intelligent scheduling algorithms. The system helps educational institutions efficiently manage class schedules, faculty allocations, subject distributions, and classroom planning.
 
-## How can I edit this code?
+---
 
-There are several ways of editing your application.
+# Features
 
-**Use Lovable**
+- AI-based timetable generation
+- Conflict-free scheduling system
+- Faculty allocation management
+- Subject and classroom management
+- Responsive modern user interface
+- Fast performance with Vite
+- Reusable component-based architecture
+- Real-time timetable updates
+- Optimized scheduling logic
+- Easy deployment and scalability
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+---
 
-Changes made via Lovable will be committed automatically to this repo.
+# Technologies Used
 
-**Use your preferred IDE**
+- React
+- Tailwind CSS
+- TypeScript
+- Supabase
+- PostgreSQL(JSON-based data handling)
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+---
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+# Project Structure
 
-Follow these steps:
+```plaintext
+src/
+├── core/
+│   ├── constraintsEngine.ts         ← Handles timetable constraints
+│   ├── geneticAlgorithm.ts          ← AI-based timetable optimization
+│   ├── pdfGenerator.ts              ← PDF timetable generation
+│   ├── timetableManager.ts          ← Core timetable scheduling logic
+│   └── exportUtils.ts               ← Export utility functions
+│
+├── context/
+│   ├── AuthContext.tsx              ← Authentication state management
+│   └── TimetableContext.tsx         ← Timetable data management
+│
+├── hooks/
+│   ├── use-mobile.tsx               ← Mobile responsiveness hook
+│   └── use-toast.ts                 ← Toast notification hook
+│
+├── pages/
+│   ├── Dashboard.tsx                ← Main dashboard page
+│   ├── Generate.tsx                 ← Timetable generation page
+│   ├── Faculty.tsx                  ← Faculty management page
+│   ├── LabTimetable.tsx             ← Lab timetable page
+│   └── Login.tsx                    ← Authentication page
+│
+├── services/
+│   └── timetableService.ts          ← Timetable-related services
+│
+├── utils/
+│   ├── helpers.ts                   ← Utility helper functions
+│   └── constants.ts                 ← Static constants
+│
+├── types/
+│   └── timetable.ts                 ← TypeScript type definitions
+│
+├── App.tsx                          ← Main application component
+├── main.tsx                         ← Application entry point
+└── index.css                        ← Global styles
+```
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
+---
+
+# Installation
+
+## Prerequisites
+
+Ensure the following software is installed on your system:
+
+- Node.js
+- npm
+
+You can install Node.js using nvm:
+
+https://github.com/nvm-sh/nvm#installing-and-updating
+
+---
+
+# Setup Instructions
+
+```bash
+# Clone the repository
 git clone <YOUR_GIT_URL>
 
-# Step 2: Navigate to the project directory.
+# Navigate to project directory
 cd <YOUR_PROJECT_NAME>
 
-# Step 3: Install the necessary dependencies.
-npm i
+# Install dependencies
+npm install
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
+# Start development server
 npm run dev
 ```
 
-**Edit a file directly in GitHub**
+The application will start on the local development server with hot reloading enabled.
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+---
 
-**Use GitHub Codespaces**
+# Build for Production
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+```bash
+npm run build
+```
 
-## What technologies are used for this project?
+---
 
-This project is built with:
+# Preview Production Build
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
+```bash
+npm run preview
+```
 
-## How can I deploy this project?
+---
 
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
+# Core Functionalities
 
-## Can I connect a custom domain to my Lovable project?
+## Timetable Generation
 
-Yes, you can!
+The application automatically creates optimized and conflict-free timetables while preventing:
 
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
+- Faculty clashes
+- Subject overlaps
+- Duplicate time slots
+- Invalid scheduling combinations
 
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+---
+
+## Optimization Algorithm
+
+The system uses intelligent optimization techniques to:
+
+- Balance subject distribution
+- Minimize scheduling conflicts
+- Improve timetable efficiency
+- Optimize classroom allocation
+
+---
+
+## Faculty Management
+
+The application supports:
+
+- Faculty profile management
+- Subject assignment
+- Availability scheduling
+- Workload balancing
+
+---
+
+## Classroom Management
+
+The system manages:
+
+- Classroom allocation
+- Room capacity handling
+- Scheduling availability
+- Conflict prevention
+
+---
+
+# Future Enhancements
+
+- Authentication system
+- Cloud database integration
+- Export timetable as PDF
+- Drag-and-drop timetable editor
+- AI-based scheduling recommendations
+- Multi-department support
+- Attendance management integration
+- Real-time collaboration features
+
+---
+
+# Deployment
+
+This project can be deployed using:
+
+- Vercel
+- Netlify
+- Firebase Hosting
+- GitHub Pages
+
+---
+
+# License
+
+This project is developed for educational and learning purposes.

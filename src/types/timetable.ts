@@ -10,6 +10,7 @@ export enum SubjectType {
   THEORY = 'Theory',
   LAB = 'Lab',
   INTEGRATED = 'Integrated',
+  THEORY_LAB = 'Theory+Lab',
 }
 
 export interface Faculty {
@@ -30,6 +31,7 @@ export interface Subject {
   theoryCredits?: number; // Theory portion of credits
   labCredits?: number; // Lab portion of credits
   labRoomId?: string; // Which lab room this subject requires
+  linkedSubjectCode?: string; // Code of the companion lab/theory subject
 }
 
 export interface Section {

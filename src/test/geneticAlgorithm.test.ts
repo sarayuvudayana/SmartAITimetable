@@ -65,7 +65,7 @@ function countContinuousPairs(sessions: ClassSession[], sectionId: string, subje
 describe('Genetic Algorithm - Lab Scheduling', () => {
   const tsm = new TimeSlotManager();
   const mappings = buildFacultySectionMappings(subjects, sections);
-  const ce = new ConstraintEngine(tsm, subjects, mappings);
+  const ce = new ConstraintEngine(tsm, subjects, mappings, [], []);
 
   const ga = new GeneticAlgorithm(ce, tsm, subjects, sections, [], [], mappings);
   const result = ga.run();

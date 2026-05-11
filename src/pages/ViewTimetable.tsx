@@ -3,7 +3,7 @@ import { useTimetable } from '@/contexts/TimetableContext';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import TimetableGrid from '@/components/timetable/TimetableGrid';
-import { ClassSession } from '@/types/timetable';
+import { ClassSession, SubjectType } from '@/types/timetable';
 
 export default function ViewTimetable() {
   const { data, dispatch } = useTimetable();
@@ -28,20 +28,27 @@ export default function ViewTimetable() {
 
   /** Resolve assigned faculty name for a given section + subject from the generated timetable */
   const getAssignedFacultyName = (sectionId: string, subjectCode: string): string => {
+    if (subjectCode === 'career') {
+      const sessions = data.generatedTimetable!.filter(
+        s => s.sectionId === sectionId && s.isCareerPath
+      );
+      if (sessions.length === 0) return '—';
+      const facultyIds = [...new Set(sessions.flatMap(s => s.facultyIds || []))];
+      return facultyIds
+        .map(fid => data.faculty.find(f => f.id === fid)?.shortName || fid)
+        .join(' / ');
+    }
+
     const session = data.generatedTimetable!.find(
       s => s.sectionId === sectionId && s.subjectCode === subjectCode
     );
     if (!session) return '—';
-    if (session.isCareerPath) {
-      return (session.facultyIds || [])
-        .map(fid => data.faculty.find(f => f.id === fid)?.shortName || fid)
-        .join(' / ');
-    }
     const primary = data.faculty.find(f => f.id === session.facultyId);
-    const secondary = session.secondFacultyId
-      ? data.faculty.find(f => f.id === session.secondFacultyId)
-      : null;
-    if (secondary) return `${primary?.shortName || session.facultyId} / ${secondary.shortName}`;
+    const secondary = session.secondFacultyId ? data.faculty.find(f => f.id === session.secondFacultyId) : null;
+    
+    if (secondary) {
+      return `${primary?.shortName || session.facultyId} & ${secondary?.shortName || session.secondFacultyId}`;
+    }
     return primary?.shortName || session.facultyId;
   };
 
@@ -125,21 +132,17 @@ export default function ViewTimetable() {
                       <tbody>
                         {(() => {
                           let sNo = 1;
-                          
-                          // Sort subjects by code for a deterministic "correct" order
-                          const sortedSubjects = [...sectionSubjects].sort((a, b) => a.code.localeCompare(b.code));
-                          
                           const careerPathRow = data.careerPathClasses.some(cp => cp.yearNumber === section.yearNumber) ? (
-                            <tr key="career-path" className="bg-primary/5 hover:bg-primary/10 transition-colors border-b-2 border-primary/10 group">
-                              <td className="px-4 py-3 border border-border/30 text-center font-black text-primary/60 group-hover:text-primary transition-colors">{sNo++}</td>
+                            <tr key={`row-${section.id}-career`} className="bg-card hover:bg-primary/5 transition-colors border-t-2 border-primary/10">
+                              <td className="px-4 py-3 border border-border/30 text-center font-bold text-muted-foreground">{sNo++}</td>
                               <td className="px-4 py-3 border border-border/30">
                                 <span className="font-black uppercase tracking-wider text-primary">CP</span>
                               </td>
                               <td className="px-4 py-3 border border-border/30">
-                                <span className="font-bold text-foreground">Career Path</span>
+                                <span className="font-semibold text-foreground">Career Path</span>
                               </td>
                               <td className="px-4 py-3 border border-border/30 text-center">
-                                <span className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-primary/20 text-primary text-base font-black border-2 border-primary/30 shadow-sm group-hover:scale-110 transition-transform">
+                                <span className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-primary/10 text-primary text-base font-black border border-primary/20 shadow-sm">
                                   {data.careerPathClasses.find(cp => cp.yearNumber === section.yearNumber)?.credits?.toFixed(1) || '2.0'}
                                 </span>
                               </td>
@@ -150,74 +153,75 @@ export default function ViewTimetable() {
                           ) : null;
 
                           return [
-                            careerPathRow,
-                            ...sortedSubjects.flatMap((subj) => {
-                            if (subj.credits && subj.credits > 4) {
-                              // Split into two rows (Theory + Lab)
-                              const row1 = (
-                                <tr key={`${subj.code}-theory`} className="bg-card hover:bg-primary/5 transition-colors group">
-                                  <td className="px-4 py-3 border border-border/30 text-center font-bold text-muted-foreground group-hover:text-primary transition-colors">{sNo++}</td>
-                                  <td className="px-4 py-3 border border-border/30">
-                                    <span className="font-black uppercase tracking-wider text-primary/80">{subj.code}</span>
-                                  </td>
-                                  <td className="px-4 py-3 border border-border/30">
-                                    <span className="font-semibold text-foreground">{subj.name}</span>
-                                  </td>
-                                  <td className="px-4 py-3 border border-border/30 text-center">
-                                    <span className="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-muted text-foreground text-sm font-black border border-border/50 shadow-sm group-hover:bg-primary/10 group-hover:text-primary group-hover:border-primary/20 transition-colors">
-                                      {subj.theoryCredits?.toFixed(1) || '0.0'}
-                                    </span>
-                                  </td>
-                                  <td className="px-4 py-3 border border-border/30">
-                                    <span className="font-bold text-foreground/80">{getAssignedFacultyName(section.id, subj.code)}</span>
-                                  </td>
-                                </tr>
-                              );
-                              const row2 = (
-                                <tr key={`${subj.code}-lab`} className="bg-muted/10 hover:bg-primary/5 transition-colors group">
-                                  <td className="px-4 py-3 border border-border/30 text-center font-bold text-muted-foreground group-hover:text-primary transition-colors">{sNo++}</td>
-                                  <td className="px-4 py-3 border border-border/30">
-                                    <span className="font-black uppercase tracking-wider text-primary/80">{subj.code}</span>
-                                  </td>
-                                  <td className="px-4 py-3 border border-border/30">
-                                    <span className="font-semibold text-foreground/70 italic">{subj.name} Lab</span>
-                                  </td>
-                                  <td className="px-4 py-3 border border-border/30 text-center">
-                                    <span className="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-muted text-foreground text-sm font-black border border-border/50 shadow-sm group-hover:bg-primary/10 group-hover:text-primary group-hover:border-primary/20 transition-colors">
-                                      {subj.labCredits?.toFixed(1) || '0.0'}
-                                    </span>
-                                  </td>
-                                  <td className="px-4 py-3 border border-border/30">
-                                    <span className="font-bold text-foreground/80">{getAssignedFacultyName(section.id, subj.code)}</span>
-                                  </td>
-                                </tr>
-                              );
-                              return [row1, row2];
-                            } else {
-                              // Single row
-                              return (
-                                <tr key={subj.code} className="bg-card hover:bg-primary/5 transition-colors odd:bg-muted/20 group">
-                                  <td className="px-4 py-3 border border-border/30 text-center font-bold text-muted-foreground group-hover:text-primary transition-colors">{sNo++}</td>
-                                  <td className="px-4 py-3 border border-border/30">
-                                    <span className="font-black uppercase tracking-wider text-primary/80">{subj.code}</span>
-                                  </td>
-                                  <td className="px-4 py-3 border border-border/30">
-                                    <span className="font-semibold text-foreground">{subj.name}</span>
-                                  </td>
-                                  <td className="px-4 py-3 border border-border/30 text-center">
-                                    <span className="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-muted text-foreground text-sm font-black border border-border/50 shadow-sm group-hover:bg-primary/10 group-hover:text-primary group-hover:border-primary/20 transition-colors">
-                                      {subj.credits?.toFixed(1) || '0.0'}
-                                    </span>
-                                  </td>
-                                  <td className="px-4 py-3 border border-border/30">
-                                    <span className="font-bold text-foreground/80">{getAssignedFacultyName(section.id, subj.code)}</span>
-                                  </td>
-                                </tr>
-                              );
-                            }
-                          })
-                          ];
-                        })()}
+                            ...sectionSubjects.flatMap((subj) => {
+                              if (subj.subjectType === SubjectType.INTEGRATED || (subj.credits && subj.credits > 4)) {
+                                // Split into two rows ONLY for unified codes (Integrated or High Credits)
+                                const row1 = (
+                                  <tr key={`row-${section.id}-${subj.code}-theory`} className="bg-card hover:bg-primary/5 transition-colors">
+                                    <td className="px-4 py-3 border border-border/30 text-center font-bold text-muted-foreground">{sNo++}</td>
+                                    <td className="px-4 py-3 border border-border/30">
+                                      <span className="font-black uppercase tracking-wider text-primary">{subj.code}</span>
+                                    </td>
+                                    <td className="px-4 py-3 border border-border/30">
+                                      <span className="font-semibold text-foreground">{subj.name}</span>
+                                    </td>
+                                    <td className="px-4 py-3 border border-border/30 text-center">
+                                      <span className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-primary/10 text-primary text-base font-black border border-primary/20 shadow-sm">
+                                        {subj.theoryCredits?.toFixed(1) || '0.0'}
+                                      </span>
+                                    </td>
+                                    <td className="px-4 py-3 border border-border/30">
+                                      <span className="font-bold text-foreground/80">{getAssignedFacultyName(section.id, subj.code)}</span>
+                                    </td>
+                                  </tr>
+                                );
+                                const row2 = (
+                                  <tr key={`row-${section.id}-${subj.code}-lab`} className="bg-muted/10 hover:bg-primary/5 transition-colors">
+                                    <td className="px-4 py-3 border border-border/30 text-center font-bold text-muted-foreground">{sNo++}</td>
+                                    <td className="px-4 py-3 border border-border/30">
+                                      <span className="font-black uppercase tracking-wider text-primary">{subj.code}</span>
+                                    </td>
+                                    <td className="px-4 py-3 border border-border/30">
+                                      <span className="font-semibold text-foreground">{subj.name} Lab</span>
+                                    </td>
+                                    <td className="px-4 py-3 border border-border/30 text-center">
+                                      <span className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-primary/10 text-primary text-base font-black border border-primary/20 shadow-sm">
+                                        {subj.labCredits?.toFixed(1) || '0.0'}
+                                      </span>
+                                    </td>
+                                    <td className="px-4 py-3 border border-border/30">
+                                      <span className="font-bold text-foreground/80">{getAssignedFacultyName(section.id, subj.code)}</span>
+                                    </td>
+                                  </tr>
+                                );
+                                return [row1, row2];
+                              } else {
+                                // Single row (Regular or Split-code Theory/Lab)
+                                const label = subj.subjectType === SubjectType.THEORY_LAB ? "(THEORY+LAB)" : "";
+                                return (
+                                  <tr key={`row-${section.id}-${subj.code}`} className="bg-card hover:bg-primary/5 transition-colors odd:bg-muted/20">
+                                    <td className="px-4 py-3 border border-border/30 text-center font-bold text-muted-foreground">{sNo++}</td>
+                                    <td className="px-4 py-3 border border-border/30">
+                                      <span className="font-black uppercase tracking-wider text-primary">{subj.code}</span>
+                                    </td>
+                                    <td className="px-4 py-3 border border-border/30">
+                                      <span className="font-semibold text-foreground">{subj.name} {label}</span>
+                                    </td>
+                                    <td className="px-4 py-3 border border-border/30 text-center">
+                                      <span className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-primary/10 text-primary text-base font-black border border-primary/20 shadow-sm">
+                                        {subj.credits?.toFixed(1) || '0.0'}
+                                      </span>
+                                    </td>
+                                    <td className="px-4 py-3 border border-border/30">
+                                      <span className="font-bold text-foreground/80">{getAssignedFacultyName(section.id, subj.code)}</span>
+                                    </td>
+                                  </tr>
+                                );
+                              }
+                            }),
+                          careerPathRow
+                        ];
+                      })()}
                       </tbody>
                     </table>
                   </div>

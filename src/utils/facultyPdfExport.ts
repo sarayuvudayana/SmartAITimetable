@@ -11,7 +11,7 @@ interface FacultyPdfDeps {
 export function exportFacultyTimetablePdf({ sessions, faculty, subjects, sections }: FacultyPdfDeps) {
   // Build display columns: slot0, slot1, BREAK, slot2, slot3, LUNCH, slot4, slot5
   const displayCols: { label: string; slotIndex: number | null; type: 'slot' | 'break' | 'lunch' }[] = [];
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i < 6; i++) {
     const s = SLOT_DEFINITIONS[i];
     if (i === 2) displayCols.push({ label: '11:00-11:10', slotIndex: null, type: 'break' });
     if (i === 4) displayCols.push({ label: '13:10-14:00', slotIndex: null, type: 'lunch' });
@@ -224,11 +224,11 @@ export function exportFacultyTimetablePdf({ sessions, faculty, subjects, section
       const subj = subjects.find(sub => sub.code === s.subjectCode);
       if (!subj) return;
       
-      if (subj.subjectType === SubjectType.INTEGRATED) {
+      if (subj.subjectType === SubjectType.INTEGRATED || subj.subjectType === SubjectType.THEORY_LAB) {
         const daySessions = facSessions.filter(ds => ds.day === s.day && ds.subjectCode === s.subjectCode);
-        const isPair = daySessions.length === 2 &&
+        const isPair = daySessions.length >= 2 &&
           daySessions.some(ds1 =>
-            daySessions.some(ds2 => Math.abs(ds1.slotIndex - ds2.slotIndex) === 1)
+            daySessions.some(ds2 => ds1 !== ds2 && Math.abs(ds1.slotIndex - ds2.slotIndex) === 1)
           );
         if (isPair) labHours++; else theoryHours++;
       } else if (subj.subjectType === SubjectType.LAB) {
@@ -244,10 +244,10 @@ export function exportFacultyTimetablePdf({ sessions, faculty, subjects, section
       <tr><td>${theoryHours}</td><td>${labHours}</td><td class="total">${theoryHours + labHours} Hours</td></tr>
     </table>`;
 
-    // Reference Table for Faculty - Sorted by Year then Code
+    // Reference Table for Faculty
     const facSubjects = subjects
       .filter(s => facSessions.some(sess => sess.subjectCode === s.code))
-      .sort((a, b) => a.yearNumber - b.yearNumber || a.code.localeCompare(b.code));
+      .sort((a, b) => a.code.localeCompare(b.code));  // Sort alphabetically by code
     if (facSubjects.length > 0) {
       html += `<div style="margin-top:20px;border:1px solid var(--border);border-radius:8px;overflow:hidden">
         <div style="background:#0f172a;color:#fff;padding:10px 14px;font-size:15px;font-weight:900;text-transform:uppercase;letter-spacing:0.1em">Course Credits & Sections</div>
@@ -275,7 +275,7 @@ export function exportFacultyTimetablePdf({ sessions, faculty, subjects, section
             })
         )].join(', ');
 
-        if (subj.credits && subj.credits > 4) {
+        if (subj.subjectType === SubjectType.INTEGRATED || (subj.credits && subj.credits > 4)) {
           html += `<tr>
             <td style="font-size:9px">${sNo++}</td>
             <td style="font-size:9px">${subj.code}</td>
@@ -291,10 +291,11 @@ export function exportFacultyTimetablePdf({ sessions, faculty, subjects, section
             <td style="font-size:9px;text-align:left">${assignedSections}</td>
           </tr>`;
         } else {
+          const label = subj.subjectType === SubjectType.THEORY_LAB ? "(THEORY+LAB)" : "";
           html += `<tr>
             <td style="font-size:9px">${sNo++}</td>
             <td style="font-size:9px">${subj.code}</td>
-            <td style="font-size:9px;text-align:left">${subj.name}</td>
+            <td style="font-size:9px;text-align:left">${subj.name} ${label}</td>
             <td style="font-size:9px">${subj.credits?.toFixed(1) || '0.0'}</td>
             <td style="font-size:9px;text-align:left">${assignedSections}</td>
           </tr>`;

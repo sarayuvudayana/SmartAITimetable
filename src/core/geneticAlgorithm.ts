@@ -22,10 +22,10 @@ interface GAConfig {
 }
 
 const DEFAULT_CONFIG: GAConfig = {
-  populationSize: 60,
-  maxGenerations: 500,
-  mutationRate: 0.2,
-  eliteCount: 5,
+  populationSize: 100,  // Increased from 60 for better population diversity
+  maxGenerations: 800,  // Increased from 500 for better convergence
+  mutationRate: 0.25,   // Slightly increased from 0.2 for better exploration
+  eliteCount: 8,        // Increased from 5 to preserve better solutions
 };
 
 type Chromosome = ClassSession[];
@@ -290,6 +290,23 @@ export class GeneticAlgorithm {
     return false;
   }
 
+  private sectionHasDifferentLabOnDay(sessions: ClassSession[], sectionId: string, subjectCode: string, day: Day): boolean {
+    const sectionDaySessions = sessions.filter(s => s.sectionId === sectionId && s.day === day && s.subjectCode !== subjectCode);
+    const sorted = sectionDaySessions.sort((a, b) => a.slotIndex - b.slotIndex);
+    for (let i = 0; i < sorted.length - 1; i++) {
+      const s1 = sorted[i];
+      const s2 = sorted[i + 1];
+      if (this.timeSlotManager.areSlotsConsecutive(s1.slotIndex, s2.slotIndex)) {
+        const subj = this.subjectMap.get(s1.subjectCode);
+        if (subj && s1.subjectCode === s2.subjectCode &&
+          (subj.subjectType === SubjectType.LAB || subj.subjectType === SubjectType.INTEGRATED)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   private generateRandomChromosome(): Chromosome {
     const sessions: ClassSession[] = [];
     const facultySchedule = new Map<string, Set<string>>();
@@ -314,6 +331,7 @@ export class GeneticAlgorithm {
     };
 
     const pickFaculty = (subject: Subject, sectionId: string, day: Day, slot: number): string | null => {
+      // ── PRE-ASSIGNED (multi-faculty subjects resolved by facultySectionAssigner) ──
       const preAssigned = getAssignedFaculty(this.facultyMappings, subject.code, sectionId);
       if (preAssigned) {
         if (isFacultyFree(preAssigned, day, slot) && !this.isFacultyBackToBack(sessions, preAssigned, day, slot, subject.code, sectionId) && !this.wouldFacultyCrossBreak(sessions, preAssigned, day, slot) && !isFacultyExclusiveToSection(preAssigned, sectionId, subject.code))
@@ -321,7 +339,39 @@ export class GeneticAlgorithm {
         return null;
       }
 
-      // Fallback for non-pre-assigned subjects: pick least-assigned eligible faculty for THIS subject
+      // ── THEORY+LAB LINKED SUBJECT: ENFORCE same faculty as the partner ───────
+      // If this subject has a linkedSubjectCode (Theory+Lab split code), the
+      // assigned faculty MUST be the same as the partner for this section.
+      // This is non-negotiable — return null if that faculty is unavailable.
+      if (subject.linkedSubjectCode && subject.subjectType === SubjectType.THEORY_LAB) {
+        // Look for a session already placed for the linked counterpart in this section
+        const linkedSession = sessions.find(
+          s => s.sectionId === sectionId && s.subjectCode === subject.linkedSubjectCode && !s.isCareerPath
+        );
+        if (linkedSession) {
+          const fid = linkedSession.facultyId;
+          if (isFacultyFree(fid, day, slot) && !this.isFacultyBackToBack(sessions, fid, day, slot, subject.code, sectionId) && !this.wouldFacultyCrossBreak(sessions, fid, day, slot))
+            return fid;
+          return null; // Enforce: cannot use a different faculty for linked subjects
+        }
+        // Look the other way: this subject is the lab code; find the theory code sessions
+        const theorySubject = [...this.subjectMap.values()].find(
+          s => s.linkedSubjectCode === subject.code && s.subjectType === SubjectType.THEORY_LAB
+        );
+        if (theorySubject) {
+          const theorySession = sessions.find(
+            s => s.sectionId === sectionId && s.subjectCode === theorySubject.code && !s.isCareerPath
+          );
+          if (theorySession) {
+            const fid = theorySession.facultyId;
+            if (isFacultyFree(fid, day, slot) && !this.isFacultyBackToBack(sessions, fid, day, slot, subject.code, sectionId) && !this.wouldFacultyCrossBreak(sessions, fid, day, slot))
+              return fid;
+            return null; // Enforce: cannot use a different faculty
+          }
+        }
+      }
+
+      // ── SINGLE-FACULTY SUBJECTS: pick least-loaded eligible faculty ───────────
       const facultyLoadInSubject = new Map<string, number>();
       for (const fid of subject.eligibleFacultyIds) facultyLoadInSubject.set(fid, 0);
       for (const s of sessions) {
@@ -334,12 +384,23 @@ export class GeneticAlgorithm {
         (facultyLoadInSubject.get(a) || 0) - (facultyLoadInSubject.get(b) || 0)
       );
 
+      // Prefer faculty from linked subject if no session placed yet (non-enforced case)
+      if (subject.linkedSubjectCode) {
+        const linkedSession = sessions.find(s => s.sectionId === sectionId && s.subjectCode === subject.linkedSubjectCode);
+        if (linkedSession) {
+          const fid = linkedSession.facultyId;
+          if (isFacultyFree(fid, day, slot) && !this.isFacultyBackToBack(sessions, fid, day, slot, subject.code, sectionId) && !this.wouldFacultyCrossBreak(sessions, fid, day, slot) && !isFacultyExclusiveToSection(fid, sectionId, subject.code))
+            return fid;
+        }
+      }
+
       for (const fid of eligible) {
         if (isFacultyFree(fid, day, slot) && !this.isFacultyBackToBack(sessions, fid, day, slot, subject.code, sectionId) && !this.wouldFacultyCrossBreak(sessions, fid, day, slot) && !isFacultyExclusiveToSection(fid, sectionId, subject.code))
           return fid;
       }
       return null;
     };
+
 
     // 1. Fixed classes
     for (const fc of this.fixedClasses) {
@@ -403,7 +464,7 @@ export class GeneticAlgorithm {
 
       // --- Phase A: Place labs/integrated continuous blocks first ---
       for (const subject of yearSubjects) {
-        if (subject.subjectType !== SubjectType.LAB && subject.subjectType !== SubjectType.INTEGRATED) continue;
+        if (subject.subjectType !== SubjectType.LAB && subject.subjectType !== SubjectType.INTEGRATED && subject.subjectType !== SubjectType.THEORY_LAB) continue;
         const existingCount = sessions.filter(s => s.sectionId === section.id && s.subjectCode === subject.code).length;
         let remaining = subject.weeklyHours - existingCount;
         if (remaining <= 0) continue;
@@ -450,6 +511,42 @@ export class GeneticAlgorithm {
                 break;
               }
               if (retryDone) break;
+            }
+            
+            // ABSOLUTE FORCE PLACEMENT FOR LABS: 
+            // If we couldn't find a clean consecutive slot, force it into the first available consecutive pair 
+            // regardless of conflicts, allowing the GA to resolve the clash later instead of losing the lab hours.
+            if (!retryDone) {
+              let forced = false;
+              const days = seededShuffle(DAYS, this.rand);
+              for (const day of days) {
+                const slots = this.timeSlotManager.getValidSlots(day);
+                for (let i = 0; i <= slots.length - 2; i++) {
+                  const s1 = slots[i];
+                  const s2 = slots[i + 1];
+                  if (this.timeSlotManager.areSlotsConsecutive(s1.slotIndex, s2.slotIndex)) {
+                    let forceFac = getAssignedFaculty(this.facultyMappings, subject.code, section.id);
+                    if (!forceFac && subject.eligibleFacultyIds.length > 0) {
+                      forceFac = subject.eligibleFacultyIds[0];
+                    }
+                    if (forceFac) {
+                      for (const sl of [s1, s2]) {
+                        sessions.push({
+                          sectionId: section.id, yearNumber: section.yearNumber,
+                          subjectCode: subject.code, facultyId: forceFac,
+                          day, slotIndex: sl.slotIndex, isFixed: false, isCareerPath: false,
+                          labRoomId,
+                        });
+                        markFaculty(forceFac, day, sl.slotIndex);
+                        markSection(section.id, day, sl.slotIndex);
+                      }
+                      forced = true;
+                      break;
+                    }
+                  }
+                }
+                if (forced) break;
+              }
             }
           }
         }
@@ -596,6 +693,35 @@ export class GeneticAlgorithm {
             }
           }
         }
+
+        // ABSOLUTE FORCE PLACEMENT FOR THEORY: 
+        // If still remaining after all clean attempts, randomly force the remaining sessions into slots 
+        // regardless of conflicts, so they are not permanently dropped.
+        if (remaining > 0) {
+          for (let r = 0; r < remaining; r++) {
+            const day = DAYS[Math.floor(this.rand() * DAYS.length)];
+            const slots = this.timeSlotManager.getValidSlots(day);
+            const slot = slots[Math.floor(this.rand() * slots.length)];
+
+            let forceFac = getAssignedFaculty(this.facultyMappings, subject.code, section.id);
+            if (!forceFac && subject.eligibleFacultyIds.length > 0) {
+              forceFac = subject.eligibleFacultyIds[0];
+            }
+
+            if (forceFac) {
+              const labRoomId = this.getLabRoomForSession(subject.code, section.id);
+              sessions.push({
+                sectionId: section.id, yearNumber: section.yearNumber,
+                subjectCode: subject.code, facultyId: forceFac,
+                day, slotIndex: slot.slotIndex, isFixed: false, isCareerPath: false,
+                labRoomId,
+              });
+              markFaculty(forceFac, day, slot.slotIndex);
+              markSection(section.id, day, slot.slotIndex);
+            }
+          }
+          remaining = 0;
+        }
       }
     }
 
@@ -631,7 +757,9 @@ export class GeneticAlgorithm {
     const shuffledDays = seededShuffle(DAYS, this.rand);
 
     for (const day of shuffledDays) {
-      if (this.sectionHasLabOnDay(sessions, sectionId, day)) continue;
+      // Allow multiple pairs of the SAME subject, but prevent different lab subjects on same day
+      if (this.sectionHasDifferentLabOnDay(sessions, sectionId, subject.code, day)) continue;
+      
       const slots = this.timeSlotManager.getValidSlots(day);
       for (let i = 0; i <= slots.length - hours; i++) {
         const candidates = slots.slice(i, i + hours);
@@ -737,18 +865,6 @@ export class GeneticAlgorithm {
   private mutate(chromosome: Chromosome): Chromosome {
     const mutable = chromosome.filter((s) => {
       if (s.isFixed || s.isCareerPath) return false;
-      const subj = this.subjectMap.get(s.subjectCode);
-      if (subj && subj.subjectType === SubjectType.LAB) return false; // Never mutate pure lab (too hard to repair)
-      if (subj && subj.subjectType === SubjectType.INTEGRATED) {
-        const hasPair = chromosome.some(other =>
-          other !== s &&
-          other.sectionId === s.sectionId &&
-          other.subjectCode === s.subjectCode &&
-          other.day === s.day &&
-          this.timeSlotManager.areSlotsConsecutive(other.slotIndex, s.slotIndex)
-        );
-        if (hasPair) return false; // This is the lab portion, don't break it
-      }
       return true;
     });
 
@@ -756,6 +872,92 @@ export class GeneticAlgorithm {
 
     const session = mutable[Math.floor(this.rand() * mutable.length)];
     const subject = this.subjectMap.get(session.subjectCode);
+
+    // --- DYNAMIC LAB BLOCK DETECTION ---
+    let isLabBlock = false;
+    let partnerSession: ClassSession | undefined;
+
+    if (subject && (subject.subjectType === SubjectType.LAB || subject.subjectType === SubjectType.INTEGRATED)) {
+      partnerSession = chromosome.find(other =>
+        other !== session &&
+        other.sectionId === session.sectionId &&
+        other.subjectCode === session.subjectCode &&
+        other.day === session.day &&
+        this.timeSlotManager.areSlotsConsecutive(other.slotIndex, session.slotIndex)
+      );
+      // An integrated subject without a partner on the same day is just a 1-hour theory class.
+      // A pure lab MUST be treated as a block.
+      if (partnerSession || subject.subjectType === SubjectType.LAB) {
+        isLabBlock = true;
+      }
+    }
+
+    if (isLabBlock) {
+      // --- LAB BLOCK MUTATION ---
+      
+      // 50% chance: try to change faculty for the entire block
+      const preAssigned = getAssignedFaculty(this.facultyMappings, session.subjectCode, session.sectionId);
+      if (!preAssigned && subject && subject.eligibleFacultyIds.length > 1 && this.rand() < 0.5) {
+        const otherFaculty = subject.eligibleFacultyIds.filter(f => f !== session.facultyId);
+        const shuffled = seededShuffle(otherFaculty, this.rand);
+        for (const fid of shuffled) {
+          const fidConflicts = chromosome.some(
+            s => s !== session && s !== partnerSession && s.facultyId === fid && s.day === session.day && 
+            (s.slotIndex === session.slotIndex || (partnerSession && s.slotIndex === partnerSession.slotIndex))
+          );
+          const exclusiveViolation = this.isFacultyExclusiveViolation(
+            chromosome.filter(s => s !== session && s !== partnerSession), fid, session.sectionId, session.subjectCode
+          );
+          if (!fidConflicts && !exclusiveViolation) {
+            session.facultyId = fid;
+            if (partnerSession) partnerSession.facultyId = fid;
+            return chromosome;
+          }
+        }
+      }
+
+      // Mutate the day & time for the entire block
+      const days = seededShuffle(DAYS, this.rand);
+      for (const day of days) {
+        // Prevent moving the lab block to a day that already has an isolated theory hour for this integrated subject
+        if (subject && subject.subjectType === SubjectType.INTEGRATED) {
+          const hasTheoryOnDay = chromosome.some(
+            s => s !== session && s !== partnerSession && s.sectionId === session.sectionId && s.subjectCode === session.subjectCode && s.day === day
+          );
+          if (hasTheoryOnDay) continue;
+        }
+
+        const slots = this.timeSlotManager.getValidSlots(day);
+        const possiblePairs: { s1: number, s2: number }[] = [];
+        for (let i = 0; i <= slots.length - 2; i++) {
+          if (this.timeSlotManager.areSlotsConsecutive(slots[i].slotIndex, slots[i+1].slotIndex)) {
+            possiblePairs.push({ s1: slots[i].slotIndex, s2: slots[i+1].slotIndex });
+          }
+        }
+        
+        const shuffledPairs = seededShuffle(possiblePairs, this.rand);
+        for (const pair of shuffledPairs) {
+          const occupiedS1 = chromosome.some(
+            s => s !== session && s !== partnerSession && s.sectionId === session.sectionId && s.day === day && s.slotIndex === pair.s1
+          );
+          const occupiedS2 = chromosome.some(
+            s => s !== session && s !== partnerSession && s.sectionId === session.sectionId && s.day === day && s.slotIndex === pair.s2
+          );
+          if (!occupiedS1 && !occupiedS2) {
+            session.day = day;
+            session.slotIndex = pair.s1;
+            if (partnerSession) {
+              partnerSession.day = day;
+              partnerSession.slotIndex = pair.s2;
+            }
+            return chromosome;
+          }
+        }
+      }
+      return chromosome;
+    }
+
+    // --- THEORY MUTATION ---
 
     // 50% chance: try to change faculty (only if not pre-assigned)
     const preAssigned = getAssignedFaculty(this.facultyMappings, session.subjectCode, session.sectionId);
@@ -766,7 +968,6 @@ export class GeneticAlgorithm {
         const conflict = chromosome.some(
           s => s !== session && s.facultyId === fid && s.day === session.day && s.slotIndex === session.slotIndex
         );
-        // Also check exclusivity: don't swap to a faculty that already teaches another subject in this section
         const exclusiveViolation = this.isFacultyExclusiveViolation(chromosome.filter(s => s !== session), fid, session.sectionId, session.subjectCode);
         if (!conflict && !exclusiveViolation) {
           session.facultyId = fid;
@@ -775,12 +976,9 @@ export class GeneticAlgorithm {
       }
     }
 
-    // Otherwise mutate time slot — prefer non-morning-empty moves
+    // Mutate time slot
     const days = seededShuffle(DAYS, this.rand);
     for (const day of days) {
-      // PREVENT CLUMPING: A section must not have multiple theory sessions for the same subject on the same day.
-      // Since `mutate` already skips lab pairs, `session` is definitely a 1-hour theory session.
-      // We must prevent moving it to a day that ALREADY has another session of this subject.
       const hasSessionOnDay = chromosome.some(
         s => s !== session && s.sectionId === session.sectionId && s.subjectCode === session.subjectCode && s.day === day
       );
@@ -847,7 +1045,11 @@ export class GeneticAlgorithm {
       }
     }
 
-    // 2. Repair faculty conflicts by reassigning to eligible faculty OR moving slots
+    // 2. Repair faculty consistency FIRST (before other repairs)
+    // This ensures one faculty per subject per section and prevents jumping
+    repaired = this.repairFacultyConsistency(repaired);
+
+    // 3. Repair faculty conflicts by reassigning to eligible faculty OR moving slots
     const facultySlotMap = new Map<string, ClassSession>();
     for (const session of repaired) {
       const fKey = `${session.facultyId}-${session.day}-${session.slotIndex}`;
@@ -895,18 +1097,218 @@ export class GeneticAlgorithm {
       }
     }
 
-    // 3. Repair broken lab continuity for LAB and INTEGRATED subjects
-    repaired = this.repairLabContinuity(repaired);
+    // 4. Repair integrity: ensure all subjects have required hours
+    repaired = this.repairIntegrity(repaired);
 
-    // 4. Force repair of faculty break rule: if a faculty crosses the break, try to swap one of the sessions 
+    // 5. Force repair of faculty break rule: if a faculty crosses the break, try to swap one of the sessions 
     //    with an empty slot on the same day for that section.
     repaired = this.repairBreakCrossings(repaired);
 
-    // 5. Repair leisure violations: ensure mandatory slots (0,1,2,4) are filled
+    // 6. Repair leisure violations: ensure mandatory slots (0,1,2,4) are filled
     //    by swapping sessions from optional slots (3,5) into empty mandatory slots
     repaired = this.repairLeisure(repaired);
 
     return repaired;
+  }
+
+  /** Central integrity repair: ensures ALL subjects in ALL sections have correct hours */
+  private repairIntegrity(sessions: ClassSession[]): ClassSession[] {
+    let repaired = sessions.map(s => ({ ...s }));
+
+    for (const section of this.sections) {
+      const yearSubjects = this.subjects.filter(s => s.yearNumber === section.yearNumber);
+      for (const subject of yearSubjects) {
+        const actualHours = repaired.filter(
+          s => s.sectionId === section.id && s.subjectCode === subject.code && !s.isCareerPath
+        ).length;
+
+        if (subject.subjectType === SubjectType.LAB || subject.subjectType === SubjectType.INTEGRATED) {
+          // Lab continuity and integrity
+          const expectedLabHours = subject.subjectType === SubjectType.INTEGRATED ? subject.labHours : subject.weeklyHours;
+          const validPairs = this.countContinuousPairs(repaired, section.id, subject.code);
+          const expectedPairs = Math.ceil(expectedLabHours / 2);
+
+          // For integrated, we also check if standalone theory hours are correct
+          const theoryHoursNeeded = subject.weeklyHours - expectedLabHours;
+          const currentTheoryHoursCount = actualHours - (2 * validPairs);
+
+          if (validPairs !== expectedPairs || (theoryHoursNeeded > 0 && currentTheoryHoursCount !== theoryHoursNeeded)) {
+            repaired = this.repairSingleLabSubject(repaired, section.id, section.yearNumber, subject);
+          }
+        } else {
+          // Theory integrity
+          if (actualHours !== subject.weeklyHours) {
+            repaired = this.repairSingleTheorySubject(repaired, section.id, section.yearNumber, subject);
+          }
+        }
+      }
+    }
+
+    return repaired;
+  }
+
+  private repairSingleTheorySubject(
+    sessions: ClassSession[],
+    sectionId: string,
+    yearNumber: number,
+    subject: Subject,
+  ): ClassSession[] {
+    let current = sessions.filter(s => s.sectionId === sectionId && s.subjectCode === subject.code && !s.isCareerPath);
+    let others = sessions.filter(s => !(s.sectionId === sectionId && s.subjectCode === subject.code && !s.isCareerPath));
+
+    // If too many hours, truncate
+    if (current.length > subject.weeklyHours) {
+      current = current.slice(0, subject.weeklyHours);
+      return [...others, ...current];
+    }
+
+    // If missing hours, add them
+    let missing = subject.weeklyHours - current.length;
+    let facultyId = getAssignedFaculty(this.facultyMappings, subject.code, sectionId);
+    if (!facultyId && current.length > 0) facultyId = current[0].facultyId;
+    if (!facultyId) facultyId = subject.eligibleFacultyIds[0] || '';
+
+    if (!facultyId) return sessions;
+
+    const days = seededShuffle(DAYS, this.rand);
+    for (const day of days) {
+      if (missing <= 0) break;
+      
+      // Try to avoid duplicate subject on same day if possible (unless weekly hours > days)
+      if (subject.weeklyHours <= 5 && current.some(s => s.day === day)) continue;
+
+      const slots = seededShuffle(this.timeSlotManager.getValidSlots(day), this.rand);
+      for (const slot of slots) {
+        if (missing <= 0) break;
+
+        const sectionOccupied = sessions.some(s => s.sectionId === sectionId && s.day === day && s.slotIndex === slot.slotIndex);
+        if (sectionOccupied) continue;
+
+        const facultyOccupied = sessions.some(s => s.facultyId === facultyId && s.day === day && s.slotIndex === slot.slotIndex);
+        if (facultyOccupied) continue;
+
+        if (this.wouldFacultyCrossBreak(sessions, facultyId, day, slot.slotIndex)) continue;
+
+        current.push({
+          sectionId, yearNumber, subjectCode: subject.code,
+          facultyId, day, slotIndex: slot.slotIndex,
+          isFixed: false, isCareerPath: false
+        });
+        missing--;
+      }
+    }
+
+    // Force place if still missing
+    if (missing > 0) {
+      for (let i = 0; i < missing; i++) {
+        const day = days[i % days.length];
+        const slot = this.timeSlotManager.getValidSlots(day)[0]?.slotIndex || 0;
+        current.push({
+          sectionId, yearNumber, subjectCode: subject.code,
+          facultyId, day, slotIndex: slot,
+          isFixed: false, isCareerPath: false
+        });
+      }
+    }
+
+    return [...others, ...current];
+  }
+
+  private repairFacultyConsistency(chromosome: Chromosome): Chromosome {
+    // Ensure one faculty continues per subject per section (no faculty jumping)
+    // IMPORTANT: Must not break lab pairs (2-hour continuous blocks)
+    const subjectSectionMap = new Map<string, string>(); // key: subjectCode-sectionId, value: facultyId
+    
+    // First pass: identify the primary faculty for each subject-section pair
+    for (const session of chromosome) {
+      if (session.isCareerPath || session.isFixed) continue;
+      
+      const key = `${session.subjectCode}-${session.sectionId}`;
+      if (!subjectSectionMap.has(key)) {
+        const preAssigned = getAssignedFaculty(this.facultyMappings, session.subjectCode, session.sectionId);
+        if (preAssigned) {
+          subjectSectionMap.set(key, preAssigned);
+        } else {
+          subjectSectionMap.set(key, session.facultyId);
+        }
+      }
+    }
+    
+    // Second pass: identify lab pairs that must NOT be split
+    const labPairs = new Set<string>();
+    for (const session of chromosome) {
+      if (session.isCareerPath || session.isFixed) continue;
+      
+      const subject = this.subjectMap.get(session.subjectCode);
+      if (!subject || (subject.subjectType !== SubjectType.LAB && subject.subjectType !== SubjectType.INTEGRATED)) continue;
+      
+      // Check if this session has a partner (consecutive slot same subject, section, day)
+      const partner = chromosome.find(s => 
+        s !== session && 
+        !s.isCareerPath && 
+        !s.isFixed && 
+        s.sectionId === session.sectionId && 
+        s.subjectCode === session.subjectCode && 
+        s.day === session.day && 
+        this.timeSlotManager.areSlotsConsecutive(s.slotIndex, session.slotIndex)
+      );
+      
+      if (partner) {
+        const key = `${session.sectionId}-${session.subjectCode}-${session.day}-${Math.min(session.slotIndex, partner.slotIndex)}`;
+        labPairs.add(key);
+      }
+    }
+    
+    // Third pass: reassign sessions while preserving lab pairs
+    const result: ClassSession[] = [];
+    const processed = new Set<ClassSession>();
+    
+    for (const session of chromosome) {
+      if (processed.has(session)) continue;
+      
+      if (session.isCareerPath || session.isFixed) {
+        result.push(session);
+        processed.add(session);
+        continue;
+      }
+      
+      const key = `${session.subjectCode}-${session.sectionId}`;
+      const assignedFaculty = subjectSectionMap.get(key) || session.facultyId;
+      
+      // Check if this session is part of a lab pair
+      const subject = this.subjectMap.get(session.subjectCode);
+      const isLabSubject = subject && (subject.subjectType === SubjectType.LAB || subject.subjectType === SubjectType.INTEGRATED);
+      
+      if (isLabSubject) {
+        const partner = chromosome.find(s =>
+          s !== session &&
+          !s.isCareerPath &&
+          !s.isFixed &&
+          s.sectionId === session.sectionId &&
+          s.subjectCode === session.subjectCode &&
+          s.day === session.day &&
+          this.timeSlotManager.areSlotsConsecutive(s.slotIndex, session.slotIndex)
+        );
+        
+        if (partner && !processed.has(partner)) {
+          // Found a partner - update both together to maintain the pair
+          session.facultyId = assignedFaculty;
+          partner.facultyId = assignedFaculty;
+          result.push(session);
+          result.push(partner);
+          processed.add(session);
+          processed.add(partner);
+          continue;
+        }
+      }
+      
+      // Not a lab pair or no partner found - update normally
+      session.facultyId = assignedFaculty;
+      result.push(session);
+      processed.add(session);
+    }
+    
+    return result;
   }
 
   private repairBreakCrossings(chromosome: Chromosome): Chromosome {
@@ -973,193 +1375,148 @@ export class GeneticAlgorithm {
     yearNumber: number,
     subject: Subject,
   ): ClassSession[] {
-    const original = sessions;
     const labHoursNeeded = subject.subjectType === SubjectType.INTEGRATED ? subject.labHours : subject.weeklyHours;
+    const theoryHoursNeeded = subject.weeklyHours - labHoursNeeded;
 
-    // For INTEGRATED subjects, preserve standalone theory sessions (non-paired)
-    // For pure LAB subjects, remove all and re-place as pairs
-    let repaired: ClassSession[];
-    if (subject.subjectType === SubjectType.INTEGRATED) {
-      const subjSessions = sessions.filter(
-        s => s.sectionId === sectionId && s.subjectCode === subject.code && !s.isCareerPath
-      );
-      // Identify sessions in continuous pairs (lab portion)
-      const pairedSet = new Set<ClassSession>();
-      const byDay = new Map<Day, ClassSession[]>();
-      for (const s of subjSessions) {
-        if (!byDay.has(s.day)) byDay.set(s.day, []);
-        byDay.get(s.day)!.push(s);
-      }
-      for (const [, daySessions] of byDay) {
-        const sorted = [...daySessions].sort((a, b) => a.slotIndex - b.slotIndex);
-        for (let i = 0; i < sorted.length - 1; i++) {
-          if (this.timeSlotManager.areSlotsConsecutive(sorted[i].slotIndex, sorted[i + 1].slotIndex)) {
-            pairedSet.add(sorted[i]);
-            pairedSet.add(sorted[i + 1]);
-            i++;
-          }
-        }
-      }
-      // Remove only paired (broken lab) sessions; keep standalone theory sessions
-      repaired = sessions.filter(s => {
-        if (s.sectionId !== sectionId || s.subjectCode !== subject.code || s.isCareerPath) return true;
-        return !pairedSet.has(s);
-      });
-    } else {
-      repaired = sessions.filter(
-        s => !(s.sectionId === sectionId && s.subjectCode === subject.code && !s.isCareerPath)
-      );
+    // 1. Separate this subject's sessions
+    const subjectSessions = sessions.filter(s => s.sectionId === sectionId && s.subjectCode === subject.code && !s.isCareerPath);
+    const otherSessions = sessions.filter(s => !(s.sectionId === sectionId && s.subjectCode === subject.code && !s.isCareerPath));
+
+    // 2. Identify current pairs and theory sessions
+    const pairedSessions: ClassSession[] = [];
+    const internalTheorySessions: ClassSession[] = [];
+    
+    const byDay = new Map<Day, ClassSession[]>();
+    for (const s of subjectSessions) {
+      if (!byDay.has(s.day)) byDay.set(s.day, []);
+      byDay.get(s.day)!.push(s);
     }
 
+    for (const [, daySessions] of byDay) {
+      const sorted = [...daySessions].sort((a, b) => a.slotIndex - b.slotIndex);
+      for (let i = 0; i < sorted.length; i++) {
+        if (i < sorted.length - 1 && this.timeSlotManager.areSlotsConsecutive(sorted[i].slotIndex, sorted[i+1].slotIndex)) {
+          pairedSessions.push(sorted[i], sorted[i+1]);
+          i++;
+        } else {
+          internalTheorySessions.push(sorted[i]);
+        }
+      }
+    }
+
+    // 3. Keep existing healthy components (truncate if over)
+    let newPairs = pairedSessions.slice(0, labHoursNeeded);
+    let newTheory = internalTheorySessions.slice(0, theoryHoursNeeded);
+    
+    let repaired = [...otherSessions, ...newPairs, ...newTheory];
+
+    // 4. Add missing pairs
+    const requiredPairs = Math.floor(labHoursNeeded / 2);
+    const currentPairs = newPairs.length / 2;
     const labRoomId = this.getLabRoomForSession(subject.code, sectionId);
-    const preAssigned = getAssignedFaculty(this.facultyMappings, subject.code, sectionId);
-    // Filter out faculty who already teach a different subject in this section
-    const allCandidates = preAssigned ? [preAssigned] : [...subject.eligibleFacultyIds];
-    const facultyCandidates = allCandidates.filter(fid => !this.isFacultyExclusiveViolation(repaired, fid, sectionId, subject.code));
-    // If all candidates are excluded, fall back to unfiltered list
-    if (facultyCandidates.length === 0) facultyCandidates.push(...allCandidates);
-    const requiredPairs = Math.ceil(labHoursNeeded / 2);
+    let facultyId = getAssignedFaculty(this.facultyMappings, subject.code, sectionId);
+    if (!facultyId && subjectSessions.length > 0) facultyId = subjectSessions[0].facultyId;
+    if (!facultyId) facultyId = subject.eligibleFacultyIds[0] || '';
 
-    for (let pair = 0; pair < requiredPairs; pair++) {
+    for (let p = currentPairs; p < requiredPairs; p++) {
       let placed = false;
-
-      for (const day of DAYS) {
-        if (this.sectionHasLabOnDay(repaired, sectionId, day)) continue;
-        const daySlots = this.timeSlotManager.getValidSlots(day);
-
-        for (let i = 0; i < daySlots.length - 1; i++) {
-          const slotA = daySlots[i].slotIndex;
-          const slotB = daySlots[i + 1].slotIndex;
-
-          if (!this.timeSlotManager.areSlotsConsecutive(slotA, slotB)) continue;
-
-          const sectionBlocked = repaired.some(
-            s => s.sectionId === sectionId && s.day === day && (s.slotIndex === slotA || s.slotIndex === slotB)
-          );
+      const days = seededShuffle(DAYS, this.rand);
+      for (const day of days) {
+        if (this.sectionHasDifferentLabOnDay(repaired, sectionId, subject.code, day)) continue;
+        const slots = this.timeSlotManager.getValidSlots(day);
+        for (let i = 0; i < slots.length - 1; i++) {
+          const s1 = slots[i].slotIndex, s2 = slots[i+1].slotIndex;
+          if (!this.timeSlotManager.areSlotsConsecutive(s1, s2)) continue;
+          
+          const sectionBlocked = repaired.some(s => s.sectionId === sectionId && s.day === day && (s.slotIndex === s1 || s.slotIndex === s2));
           if (sectionBlocked) continue;
 
-          if (labRoomId) {
-            const labBlocked = repaired.some(
-              s => s.labRoomId === labRoomId && s.day === day && (s.slotIndex === slotA || s.slotIndex === slotB)
-            );
-            if (labBlocked) continue;
-          }
+          const facultyBlocked = facultyId && repaired.some(s => s.facultyId === facultyId && s.day === day && (s.slotIndex === s1 || s.slotIndex === s2));
+          if (facultyBlocked) continue;
 
-          let selectedFaculty: string | null = null;
-          for (const fid of facultyCandidates) {
-            const facultyBlocked = repaired.some(
-              s => s.facultyId === fid && s.day === day && (s.slotIndex === slotA || s.slotIndex === slotB)
-            );
-            if (facultyBlocked) continue;
+          if (labRoomId && repaired.some(s => s.labRoomId === labRoomId && s.day === day && (s.slotIndex === s1 || s.slotIndex === s2))) continue;
 
-            // Avoid faculty adjacency to satisfy no back-to-back + post-lab-free expectations
-            const adjacentBefore = repaired.some(
-              s => s.facultyId === fid && s.day === day && this.timeSlotManager.areSlotsConsecutive(s.slotIndex, slotA)
-            );
-            const adjacentAfter = repaired.some(
-              s => s.facultyId === fid && s.day === day && this.timeSlotManager.areSlotsConsecutive(slotB, s.slotIndex)
-            );
-            if (adjacentBefore || adjacentAfter) continue;
+          if (facultyId && (this.wouldFacultyCrossBreak(repaired, facultyId, day, s1) || this.wouldFacultyCrossBreak(repaired, facultyId, day, s2))) continue;
 
-            const crossA = this.wouldFacultyCrossBreak(repaired, fid, day, slotA);
-            const crossB = this.wouldFacultyCrossBreak(repaired, fid, day, slotB);
-            if (crossA || crossB) continue;
-
-            selectedFaculty = fid;
-            break;
-          }
-
-          if (!selectedFaculty) continue;
-
-          repaired.push({
-            sectionId,
-            yearNumber,
-            subjectCode: subject.code,
-            facultyId: selectedFaculty,
-            day,
-            slotIndex: slotA,
-            isFixed: false,
-            isCareerPath: false,
-            labRoomId,
-          });
-          repaired.push({
-            sectionId,
-            yearNumber,
-            subjectCode: subject.code,
-            facultyId: selectedFaculty,
-            day,
-            slotIndex: slotB,
-            isFixed: false,
-            isCareerPath: false,
-            labRoomId,
-          });
-
+          repaired.push({ sectionId, yearNumber, subjectCode: subject.code, facultyId: facultyId || '', day, slotIndex: s1, isFixed: false, isCareerPath: false, labRoomId });
+          repaired.push({ sectionId, yearNumber, subjectCode: subject.code, facultyId: facultyId || '', day, slotIndex: s2, isFixed: false, isCareerPath: false, labRoomId });
           placed = true;
           break;
         }
-
         if (placed) break;
       }
-
-      // If not placeable, keep original sessions instead of returning partial/broken replacement
-      if (!placed) return original;
+      
+      // Force place if missing
+      if (!placed && facultyId) {
+        const day = days[0];
+        const s1 = 0, s2 = 1;
+        repaired.push({ sectionId, yearNumber, subjectCode: subject.code, facultyId, day, slotIndex: s1, isFixed: false, isCareerPath: false, labRoomId });
+        repaired.push({ sectionId, yearNumber, subjectCode: subject.code, facultyId, day, slotIndex: s2, isFixed: false, isCareerPath: false, labRoomId });
+      }
     }
 
-    return repaired;
-  }
+    // 5. Add missing theory sessions
+    const currentTheoryCount = newTheory.length;
+    for (let t = currentTheoryCount; t < theoryHoursNeeded; t++) {
+      let placed = false;
+      const days = seededShuffle(DAYS, this.rand);
+      for (const day of days) {
+        // For integrated, avoid same day as lab if possible
+        const hasLabOnDay = repaired.some(s => s.sectionId === sectionId && s.subjectCode === subject.code && s.day === day && this.countContinuousPairs(repaired, sectionId, subject.code) > 0);
+        if (theoryHoursNeeded <= (5 - (labHoursNeeded/2)) && hasLabOnDay) continue;
 
-  /** Re-place LAB/INTEGRATED sessions that are missing/split/broken into valid 2-hour blocks */
-  private repairLabContinuity(sessions: ClassSession[]): ClassSession[] {
-    let repaired = sessions.map(s => ({ ...s }));
+        const slots = seededShuffle(this.timeSlotManager.getValidSlots(day), this.rand);
+        for (const slot of slots) {
+          const sectionBlocked = repaired.some(s => s.sectionId === sectionId && s.day === day && s.slotIndex === slot.slotIndex);
+          if (sectionBlocked) continue;
+          
+          if (facultyId && repaired.some(s => s.facultyId === facultyId && s.day === day && s.slotIndex === slot.slotIndex)) continue;
+          if (facultyId && this.wouldFacultyCrossBreak(repaired, facultyId, day, slot.slotIndex)) continue;
 
-    // Repair both LAB and INTEGRATED subjects
-    const labSubjects = this.subjects.filter(s => s.subjectType === SubjectType.LAB || s.subjectType === SubjectType.INTEGRATED);
-
-    for (const section of this.sections) {
-      const sectionLabSubjects = labSubjects.filter(s => s.yearNumber === section.yearNumber);
-
-      for (const subject of sectionLabSubjects) {
-        const expectedLabHours = subject.subjectType === SubjectType.INTEGRATED ? subject.labHours : subject.weeklyHours;
-        if (expectedLabHours <= 0 || expectedLabHours % 2 !== 0) continue;
-
-        const valid = this.isValidLabScheduleForSubject(
-          repaired,
-          section.id,
-          subject.code,
-          expectedLabHours,
-        );
-
-        if (!valid) {
-          repaired = this.repairSingleLabSubject(repaired, section.id, section.yearNumber, subject);
+          repaired.push({ sectionId, yearNumber, subjectCode: subject.code, facultyId: facultyId || '', day, slotIndex: slot.slotIndex, isFixed: false, isCareerPath: false });
+          placed = true;
+          break;
         }
+        if (placed) break;
       }
     }
 
     return repaired;
   }
 
-  /** Final hard guarantee: LAB subjects must end as exact 2-hour continuous blocks */
+
+  /** Final hard guarantee: ALL subjects must have correct hours and LAB subjects must be continuous */
   private ensureLabContinuity(sessions: ClassSession[]): ClassSession[] {
     let result = sessions.map(s => ({ ...s }));
 
     for (let attempt = 0; attempt < 5; attempt++) {
       let valid = true;
 
-      const labSubjects = this.subjects.filter(s => s.subjectType === SubjectType.LAB || s.subjectType === SubjectType.INTEGRATED);
       for (const section of this.sections) {
-        for (const subject of labSubjects.filter(s => s.yearNumber === section.yearNumber)) {
-          const expectedLabHours = subject.subjectType === SubjectType.INTEGRATED ? subject.labHours : subject.weeklyHours;
-          if (expectedLabHours <= 0 || expectedLabHours % 2 !== 0) continue;
-          if (!this.isValidLabScheduleForSubject(result, section.id, subject.code, expectedLabHours)) {
+        const yearSubjects = this.subjects.filter(s => s.yearNumber === section.yearNumber);
+        for (const subject of yearSubjects) {
+          const actualHours = result.filter(
+            s => s.sectionId === section.id && s.subjectCode === subject.code && !s.isCareerPath
+          ).length;
+
+          if (actualHours !== subject.weeklyHours) {
             valid = false;
             break;
+          }
+
+          if (subject.subjectType === SubjectType.LAB || subject.subjectType === SubjectType.INTEGRATED) {
+            const expectedLabHours = subject.subjectType === SubjectType.INTEGRATED ? subject.labHours : subject.weeklyHours;
+            if (expectedLabHours > 0 && !this.isValidLabScheduleForSubject(result, section.id, subject.code, expectedLabHours)) {
+              valid = false;
+              break;
+            }
           }
         }
         if (!valid) break;
       }
 
       if (valid) return result;
-      result = this.repairLabContinuity(result);
+      result = this.repairIntegrity(result);
     }
 
     return result;

@@ -12,7 +12,7 @@ const DISPLAY_SLOTS = [
   { slotIndex: -2, startTime: '11:00', endTime: '11:10' }, // Break
   ...SLOT_DEFINITIONS.slice(2, 4),
   { slotIndex: -1, startTime: '13:10', endTime: '14:00' }, // Lunch
-  ...SLOT_DEFINITIONS.slice(4, 7),
+  ...SLOT_DEFINITIONS.slice(4, 6),
 ];
 
 export default function FacultyTimetable() {
@@ -169,7 +169,7 @@ export default function FacultyTimetable() {
                             const subj = data.subjects.find(s => s.code === session.subjectCode);
                             if (!subj) return false;
                             if (subj.subjectType === SubjectType.LAB) return true;
-                            if (subj.subjectType === SubjectType.INTEGRATED) {
+                            if (subj.subjectType === SubjectType.INTEGRATED || subj.subjectType === SubjectType.THEORY_LAB) {
                               const sectionSessions = data.generatedTimetable!
                                 .filter(s => s.sectionId === session.sectionId && s.subjectCode === session.subjectCode && s.day === session.day)
                                 .map(s => s.slotIndex)
@@ -318,13 +318,8 @@ export default function FacultyTimetable() {
                           const subj = data.subjects.find(sub => sub.code === s.subjectCode);
                           if (!subj) return;
                           
-                          if (subj.subjectType === SubjectType.INTEGRATED) {
-                            const daySessions = facSessions.filter(ds => ds.day === s.day && ds.subjectCode === s.subjectCode);
-                            const isPair = daySessions.length === 2 && 
-                              daySessions.some(ds1 => 
-                                daySessions.some(ds2 => Math.abs(ds1.slotIndex - ds2.slotIndex) === 1)
-                              );
-                            if (isPair) labCount++; else theoryCount++;
+                          if (subj.subjectType === SubjectType.INTEGRATED || subj.subjectType === SubjectType.THEORY_LAB) {
+                            if (s.labRoomId) labCount++; else theoryCount++;
                           } else if (subj.subjectType === SubjectType.LAB) {
                             labCount++;
                           } else {
@@ -407,13 +402,13 @@ export default function FacultyTimetable() {
                                     .filter(s => s.subjectCode === subj.code)
                                     .map(s => {
                                       const sec = data.sections.find(sec => sec.id === s.sectionId);
-                                      const isAssisting = s.secondFacultyId === fac.id;
+                          const isAssisting = s.secondFacultyId === fac.id;
                                       return `Y${s.yearNumber}-${sec?.name || s.sectionId}${isAssisting ? " (Asst.)" : ""}`;
                                     })
                                 )];
 
-                                if (subj.credits && subj.credits > 4) {
-                                  // Split into two rows
+                                if (subj.subjectType === SubjectType.INTEGRATED || (subj.credits && subj.credits > 4)) {
+                                  // Split into two rows ONLY for unified codes
                                   const row1 = (
                                     <tr key={`${subj.code}-theory`} className="bg-card hover:bg-primary/5 transition-colors">
                                       <td className="px-4 py-3 border border-border/30 text-center font-bold text-muted-foreground">{sNo++}</td>
@@ -424,7 +419,7 @@ export default function FacultyTimetable() {
                                         <span className="font-semibold text-foreground">{subj.name}</span>
                                       </td>
                                       <td className="px-4 py-3 border border-border/30 text-center">
-                                        <span className="inline-flex items-center justify-center min-w-[36px] h-9 px-2 rounded-full bg-primary/10 text-primary text-base font-black border border-primary/20 shadow-sm">
+                                        <span className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-primary/10 text-primary text-base font-black border border-primary/20 shadow-sm">
                                           {subj.theoryCredits?.toFixed(1) || '0.0'}
                                         </span>
                                       </td>
@@ -447,7 +442,7 @@ export default function FacultyTimetable() {
                                         <span className="font-semibold text-foreground">{subj.name} Lab</span>
                                       </td>
                                       <td className="px-4 py-3 border border-border/30 text-center">
-                                        <span className="inline-flex items-center justify-center min-w-[36px] h-9 px-2 rounded-full bg-primary/10 text-primary text-base font-black border border-primary/20 shadow-sm">
+                                        <span className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-primary/10 text-primary text-base font-black border border-primary/20 shadow-sm">
                                           {subj.labCredits?.toFixed(1) || '0.0'}
                                         </span>
                                       </td>
@@ -462,25 +457,26 @@ export default function FacultyTimetable() {
                                   );
                                   return [row1, row2];
                                 } else {
-                                  // Single row
+                                  // Single row (Regular or Split-code Theory/Lab)
+                                  const label = subj.subjectType === SubjectType.THEORY_LAB ? "(THEORY+LAB)" : "";
                                   return (
-                                    <tr key={subj.code} className="bg-card hover:bg-primary/5 transition-colors odd:bg-muted/20">
+                                    <tr key={`fac-row-${fac.id}-${subj.code}`} className="bg-card hover:bg-primary/5 transition-colors odd:bg-muted/20">
                                       <td className="px-4 py-3 border border-border/30 text-center font-bold text-muted-foreground">{sNo++}</td>
                                       <td className="px-4 py-3 border border-border/30">
                                         <span className="font-black uppercase tracking-wider text-primary">{subj.code}</span>
                                       </td>
                                       <td className="px-4 py-3 border border-border/30">
-                                        <span className="font-semibold text-foreground">{subj.name}</span>
+                                        <span className="font-semibold text-foreground">{subj.name} {label}</span>
                                       </td>
                                       <td className="px-4 py-3 border border-border/30 text-center">
-                                        <span className="inline-flex items-center justify-center min-w-[36px] h-9 px-2 rounded-full bg-primary/10 text-primary text-base font-black border border-primary/20 shadow-sm">
+                                        <span className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-primary/10 text-primary text-base font-black border border-primary/20 shadow-sm">
                                           {subj.credits?.toFixed(1) || '0.0'}
                                         </span>
                                       </td>
                                       <td className="px-4 py-3 border border-border/30">
                                         <div className="flex flex-wrap gap-1">
                                           {assignedSections.map(secName => (
-                                            <Badge key={secName} variant="secondary" className="text-[11px] font-bold px-2 py-0.5 whitespace-nowrap">{secName}</Badge>
+                                            <Badge key={`badge-${fac.id}-${subj.code}-${secName}`} variant="secondary" className="text-[11px] font-bold px-2 py-0.5 whitespace-nowrap">{secName}</Badge>
                                           ))}
                                         </div>
                                       </td>

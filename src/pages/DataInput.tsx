@@ -285,6 +285,8 @@ export default function DataInput() {
   const [subLabCredits, setSubLabCredits] = useState('0');
   const [subLabHours, setSubLabHours] = useState('0');
   const [subYear, setSubYear] = useState('1');
+  const [subType, setSubType] = useState<SubjectType>(SubjectType.THEORY);
+  const [subLinkedCode, setSubLinkedCode] = useState(''); // Lab Course Code for Theory+Lab subjects
 
   const toggleEligibleFaculty = (fid: string) => {
     setSubEligibleFaculty(prev =>
@@ -313,11 +315,12 @@ export default function DataInput() {
       payload: {
         code: subCode, name: subName, facultyId: subFaculty,
         eligibleFacultyIds,
-        weeklyHours: totalHrs, subjectType: autoType,
+        weeklyHours: totalHrs, subjectType: subType || autoType,
         labHours: labHrs, yearNumber: parseInt(subYear),
         credits: theoryC + labC,
         theoryCredits: theoryC,
         labCredits: labC,
+        linkedSubjectCode: subLinkedCode || undefined,
       },
     });
     setSubCode(''); 
@@ -327,6 +330,8 @@ export default function DataInput() {
     setSubTheoryCredits('3.0'); 
     setSubLabCredits('0');
     setSubEligibleFaculty([]);
+    setSubLinkedCode('');
+    setSubType(SubjectType.THEORY);
   };
 
   // Section form
@@ -539,7 +544,13 @@ export default function DataInput() {
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="grid grid-cols-2 gap-2">
-                <div><Label className="text-sm font-bold mb-1.5 block">Code</Label><Input value={subCode} onChange={(e) => setSubCode(e.target.value)} placeholder="CS101" className="h-8 text-sm" /></div>
+                <div><Label className="text-sm font-bold mb-1.5 block">Code</Label><Input value={subCode} onChange={(e) => {
+                setSubCode(e.target.value);
+                // Auto-suggest lab code for Theory+Lab subjects
+                if (subType === SubjectType.THEORY_LAB) {
+                  setSubLinkedCode(e.target.value + 'L');
+                }
+              }} placeholder="CS101" className="h-8 text-sm" /></div>
                 <div><Label className="text-sm font-bold mb-1.5 block">Name</Label><Input value={subName} onChange={(e) => setSubName(e.target.value)} placeholder="Data Structures" className="h-8 text-sm" /></div>
               </div>
               <div className="grid grid-cols-2 gap-2">
@@ -598,6 +609,62 @@ export default function DataInput() {
                   <Label className="text-sm font-bold mb-1.5 block text-primary/80">Lab Credits</Label>
                   <Input type="number" step="0.5" value={subLabCredits} onChange={(e) => setSubLabCredits(e.target.value)} min="0" className="h-8 text-sm border-primary/20" />
                 </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2 mt-2">
+                <div>
+                  <Label className="text-sm font-bold mb-1.5 block">Category</Label>
+                  <Select 
+                    value={subType} 
+                    onValueChange={(val: SubjectType) => {
+                      setSubType(val);
+                      if (val === SubjectType.INTEGRATED) {
+                        setSubHours('3');
+                        setSubLabHours('1'); // 1 session = 2h
+                        setSubTheoryCredits('3.0');
+                        setSubLabCredits('1.0');
+                      } else if (val === SubjectType.THEORY_LAB) {
+                        setSubHours('4');
+                        setSubLabHours('1');
+                        setSubTheoryCredits('4.0');
+                        setSubLabCredits('1.0');
+                      } else if (val === SubjectType.LAB) {
+                        setSubHours('0');
+                        setSubLabHours('1');
+                        setSubTheoryCredits('0');
+                        setSubLabCredits('1.5');
+                      } else {
+                        setSubHours('3');
+                        setSubLabHours('0');
+                        setSubTheoryCredits('3.0');
+                        setSubLabCredits('0');
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Select Category" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={SubjectType.THEORY}>Theory Only</SelectItem>
+                      <SelectItem value={SubjectType.LAB}>Lab Only</SelectItem>
+                      <SelectItem value={SubjectType.INTEGRATED}>Integrated (3+2)</SelectItem>
+                      <SelectItem value={SubjectType.THEORY_LAB}>Theory+Lab (Split Codes)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {subType === SubjectType.THEORY_LAB && (
+                  <div>
+                    <Label className="text-sm font-bold mb-1.5 block text-amber-600 dark:text-amber-400">
+                      Lab Course Code
+                    </Label>
+                    <Input
+                      value={subLinkedCode}
+                      onChange={(e) => setSubLinkedCode(e.target.value.toUpperCase())}
+                      placeholder={`${subCode || 'CS101'}L`}
+                      className="h-8 text-sm border-amber-500/40 focus:border-amber-500"
+                    />
+                    <p className="text-[10px] text-muted-foreground mt-1 font-medium">
+                      The separate course code for the Lab portion (e.g. CS101L). Same faculty teaches both.
+                    </p>
+                  </div>
+                )}
               </div>
               {data.faculty.length > 0 && (
                 <div className="space-y-2">

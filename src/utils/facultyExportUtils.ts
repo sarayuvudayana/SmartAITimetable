@@ -67,15 +67,15 @@ export function exportFacultyToCSV({ sessions, faculty, subjects, sections }: Fa
         let type: string;
         if (session.isCareerPath) {
           type = session.careerPathSlotType === 'lab' ? 'CP-LAB' : 'CP-THEORY';
-        } else if (subj?.subjectType === SubjectType.LAB) {
-          type = 'LAB';
+        } else if (subj?.subjectType === SubjectType.LAB || subj?.subjectType === SubjectType.THEORY_LAB) {
+          type = session.labRoomId ? 'LAB' : 'THEORY';
         } else if (subj?.subjectType === SubjectType.INTEGRATED) {
           type = session.labRoomId ? 'INT-LAB' : 'INT-THEORY';
         } else {
           type = 'THEORY';
         }
 
-        const isLab = subj && (subj.subjectType === SubjectType.LAB || subj.subjectType === SubjectType.INTEGRATED);
+        const isLab = subj && (subj.subjectType === SubjectType.LAB || subj.subjectType === SubjectType.INTEGRATED || subj.subjectType === SubjectType.THEORY_LAB);
         const isCpLab = session.isCareerPath && session.careerPathSlotType === 'lab';
 
         if ((isLab || isCpLab) && colIdx < displayCols.length - 1) {
@@ -129,11 +129,11 @@ export function exportFacultyToCSV({ sessions, faculty, subjects, sections }: Fa
       const subj = subjects.find(sub => sub.code === s.subjectCode);
       if (!subj) return;
       
-      if (subj.subjectType === SubjectType.INTEGRATED) {
+      if (subj.subjectType === SubjectType.INTEGRATED || subj.subjectType === SubjectType.THEORY_LAB) {
         const daySessions = facSessions.filter(ds => ds.day === s.day && ds.subjectCode === s.subjectCode);
-        const isPair = daySessions.length === 2 &&
+        const isPair = daySessions.length >= 2 &&
           daySessions.some(ds1 =>
-            daySessions.some(ds2 => Math.abs(ds1.slotIndex - ds2.slotIndex) === 1)
+            daySessions.some(ds2 => ds1 !== ds2 && Math.abs(ds1.slotIndex - ds2.slotIndex) === 1)
           );
         if (isPair) labHours++; else theoryHours++;
       } else if (subj.subjectType === SubjectType.LAB) {

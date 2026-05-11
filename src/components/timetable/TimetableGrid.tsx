@@ -14,33 +14,26 @@ import { Pencil } from 'lucide-react';
 
 interface Props {
   sessions: ClassSession[];
-  section?: Section; // Optional now because we might be in lab/faculty mode
+  section: Section;
   subjects: Subject[];
   faculty: Faculty[];
   facultyMappings?: FacultySectionMapping[];
   onEditSession?: (newSessions: ClassSession[]) => void;
   editable?: boolean;
-  viewMode?: 'section' | 'faculty' | 'lab';
-  filterId?: string; // Room ID if in lab mode, Faculty ID if in faculty mode
 }
 
 export default function TimetableGrid({
   sessions, section, subjects, faculty,
-  facultyMappings = [], onEditSession, editable = false,
-  viewMode = 'section', filterId
+  facultyMappings = [], onEditSession, editable = false
 }: Props) {
-  const sectionSessions = sessions.filter((s) => {
-    if (viewMode === 'lab') return s.labRoomId === filterId;
-    if (viewMode === 'faculty') return (s.facultyId === filterId || s.secondFacultyId === filterId || s.facultyIds?.includes(filterId || ''));
-    return s.sectionId === section?.id;
-  });
+  const sectionSessions = sessions.filter((s) => s.sectionId === section.id);
 
   const displaySlots = [
     ...SLOT_DEFINITIONS.slice(0, 2),
     { slotIndex: -2, startTime: '11:00', endTime: '11:10' },
     ...SLOT_DEFINITIONS.slice(2, 4),
     { slotIndex: -1, startTime: '13:10', endTime: '14:00' },
-    ...SLOT_DEFINITIONS.slice(4, 7), // Now includes indices 4, 5, and 6
+    ...SLOT_DEFINITIONS.slice(4, 6),
   ];
 
   const [editOpen, setEditOpen] = useState(false);
@@ -56,21 +49,19 @@ export default function TimetableGrid({
     if (session.isCareerPath) return session.careerPathSlotType === 'lab';
     const subj = subjects.find(s => s.code === session.subjectCode);
     if (!subj) return false;
-    
-    // Only subjects that are meant to have labs (LAB or INTEGRATED) should be checked for 2-hour occupancy
-    const canBeLab = subj.subjectType === SubjectType.LAB || subj.subjectType === SubjectType.INTEGRATED;
-    if (!canBeLab) return false;
+    if (subj.subjectType === SubjectType.LAB) return true;
+    if (subj.subjectType === SubjectType.INTEGRATED || subj.subjectType === SubjectType.THEORY_LAB) {
+      const sameDaySessions = sectionSessions.filter(
+        s => s.subjectCode === session.subjectCode && s.day === session.day
+      ).map(s => s.slotIndex).sort((a, b) => a - b);
 
-    const sameDaySessions = sectionSessions.filter(
-      s => s.subjectCode === session.subjectCode && s.day === session.day && s.sectionId === session.sectionId
-    ).map(s => s.slotIndex).sort((a, b) => a - b);
-
-    const tsm = new TimeSlotManager();
-    for (let i = 0; i < sameDaySessions.length - 1; i++) {
-      const slotA = sameDaySessions[i];
-      const slotB = sameDaySessions[i + 1];
-      if (tsm.areSlotsConsecutive(slotA, slotB)) {
-        if (slotA === session.slotIndex || slotB === session.slotIndex) return true;
+      const tsm = new TimeSlotManager();
+      for (let i = 0; i < sameDaySessions.length - 1; i++) {
+        const slotA = sameDaySessions[i];
+        const slotB = sameDaySessions[i + 1];
+        if (tsm.areSlotsConsecutive(slotA, slotB)) {
+          if (slotA === session.slotIndex || slotB === session.slotIndex) return true;
+        }
       }
     }
     return false;
@@ -84,12 +75,12 @@ export default function TimetableGrid({
     const prevSlot = slotIndex - 1;
     const isPrevConsecutive = tsm.areSlotsConsecutive(prevSlot, slotIndex);
     const prevSession = getSession(day, prevSlot);
-    const isSecond = isPrevConsecutive && prevSession && prevSession.subjectCode === session.subjectCode && prevSession.sectionId === session.sectionId;
+    const isSecond = isPrevConsecutive && prevSession && prevSession.subjectCode === session.subjectCode;
 
     const nextSlot = slotIndex + 1;
     const isNextConsecutive = tsm.areSlotsConsecutive(slotIndex, nextSlot);
     const nextSession = getSession(day, nextSlot);
-    const isFirst = isNextConsecutive && nextSession && nextSession.subjectCode === session.subjectCode && nextSession.sectionId === session.sectionId;
+    const isFirst = isNextConsecutive && nextSession && nextSession.subjectCode === session.subjectCode;
 
     return { isFirst: isFirst && !isSecond, isSecond };
   };
@@ -158,8 +149,6 @@ export default function TimetableGrid({
     setEditOpen(false);
     toast({ title: 'Cell updated successfully' });
   };
-
-  const currentSection = section; // for local use in loops
 
   return (
     <>
@@ -231,15 +220,10 @@ export default function TimetableGrid({
                   if (isSecond) return null;
 
                   if (!session) return <td key={i} className="p-3 border-2 border-slate-900/15 dark:border-slate-100/10 bg-slate-50/20 dark:bg-slate-950/20 shadow-inner"></td>;
-                  const isLab = isLabSession(session);
-                  
-                  // In Lab view mode, only show 2-hour continuous lab sessions
-                  if (viewMode === 'lab' && !isLab) {
-                    return <td key={i} className="p-3 border-2 border-slate-900/15 dark:border-slate-100/10 bg-slate-50/20 dark:bg-slate-950/20 shadow-inner"></td>;
-                  }
                   const subj = subjects.find((s) => s.code === session.subjectCode);
                   const fac = faculty.find((f) => f.id === session.facultyId);
                   const fac2 = session.secondFacultyId ? faculty.find(f => f.id === session.secondFacultyId) : null;
+                  const isLab = isLabSession(session);
                   const cpLabel = session.isCareerPath ? (session.careerPathSlotType === 'lab' ? 'CP-LAB' : 'CP') : null;
 
                    return (
@@ -297,15 +281,9 @@ export default function TimetableGrid({
                           )}
                         </div>
 
-                        {session.labRoomId && viewMode !== 'section' && (
-                          <div className="text-[10px] font-black bg-primary/20 text-primary px-2.5 py-1 rounded-lg border-2 border-primary/40 uppercase tracking-widest shadow-md text-center group-hover:scale-105 transition-transform">
-                            Room: {session.labRoomId}
-                          </div>
-                        )}
-
-                        {viewMode === 'lab' && (
-                          <div className="text-[10px] font-black bg-primary/20 text-primary px-2.5 py-1 rounded-lg border-2 border-primary/40 uppercase tracking-widest shadow-md text-center group-hover:scale-105 transition-transform">
-                            Sec: {session.sectionId}
+                        {session.labRoomId && (
+                          <div className="text-[10px] font-black bg-primary/20 text-primary px-2 py-0.5 rounded-md border border-primary/30 uppercase tracking-widest shadow-sm text-center">
+                            {session.labRoomId}
                           </div>
                         )}
 
@@ -336,13 +314,14 @@ export default function TimetableGrid({
           </DialogHeader>
           {editTarget && (() => {
             const editSubj = subjects.find(s => s.code === editSubjectCode);
-            const isLabSess = editSubj && (editSubj.subjectType === SubjectType.LAB || editSubj.subjectType === SubjectType.INTEGRATED);
+            const currentSession = editTarget ? getSession(editTarget.day, editTarget.slotIndex) : null;
+            const isActuallyLab = currentSession ? isLabSession(currentSession) : false;
             return (
               <div className="space-y-6 pt-2">
                 <div className="flex items-center gap-3 p-3 bg-muted rounded-xl border border-border">
                   <div className="flex flex-col">
                     <span className="text-[10px] font-black uppercase text-muted-foreground tracking-widest">Scheduled Slot</span>
-                    <span className="text-sm font-bold text-foreground">{editTarget.day} — Slot {editTarget.slotIndex} {section ? `— Sec ${section.name}` : ""}</span>
+                    <span className="text-sm font-bold text-foreground">{editTarget.day} — Slot {editTarget.slotIndex} — Sec {section.name}</span>
                   </div>
                 </div>
                 
@@ -352,7 +331,7 @@ export default function TimetableGrid({
                     <Select value={editSubjectCode} onValueChange={setEditSubjectCode}>
                       <SelectTrigger className="h-11 border-2 focus:ring-primary/20"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        {subjects.filter(s => !section || s.yearNumber === section.yearNumber).map(s => (
+                        {subjects.filter(s => s.yearNumber === section.yearNumber).map(s => (
                           <SelectItem key={s.code} value={s.code} className="text-sm font-medium">{s.code} — {s.name}</SelectItem>
                         ))}
                       </SelectContent>
@@ -371,7 +350,7 @@ export default function TimetableGrid({
                     </Select>
                   </div>
 
-                  {isLabSess && (
+                  {isActuallyLab && (
                     <div className="space-y-1.5 p-4 bg-primary/5 rounded-xl border border-primary/10">
                       <Label className="text-xs font-black uppercase tracking-widest text-primary px-1">Secondary Educator (Asst.)</Label>
                       <Select value={editSecondFacultyId} onValueChange={setEditSecondFacultyId}>

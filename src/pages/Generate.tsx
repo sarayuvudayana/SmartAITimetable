@@ -10,14 +10,9 @@ import { TimeSlotManager } from '@/core/timeSlotManager';
 import { ConstraintEngine } from '@/core/constraintEngine';
 import { GeneticAlgorithm, GAResult } from '@/core/geneticAlgorithm';
 import { buildFacultySectionMappings } from '@/core/facultySectionAssigner';
-import { Subject, SubjectType, LabRoomMapping, ClassSession } from '@/types/timetable';
+import { Subject, SubjectType, LabRoomMapping } from '@/types/timetable';
 import GAWorker from '@/workers/gaWorker?worker';
-import { Sparkles, Calculator, Loader2, Wand2, ShieldCheck } from 'lucide-react';
-import { callGroqApi } from '@/services/aiService';
-import { SYSTEM_PROMPT, buildOptimizationPrompt } from '@/core/aiPrompt';
-import { summarizeTimetable, parseAiSwaps, applyAiSwaps } from '@/core/aiOptimizer';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { Sparkles, Calculator, Loader2 } from 'lucide-react';
 
 /** Build lab-room-to-section mappings for lab/integrated subjects before generation */
 function buildLabRoomMappings(
@@ -61,12 +56,9 @@ function buildLabRoomMappings(
 export default function Generate() {
   const { data, dispatch } = useTimetable();
   const [running, setRunning] = useState(false);
-  const [aiRunning, setAiRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [result, setResult] = useState<GAResult | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
-  const [apiKey, setApiKey] = useState('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'); // Pre-filled with user key for convenience
-  const [aiOptimized, setAiOptimized] = useState(false);
 
   const validate = useCallback(() => {
     const errs: string[] = [];
@@ -134,9 +126,9 @@ export default function Generate() {
       labRooms: data.labRooms,
       labRoomMappings: labMappings,
       config: {
-        populationSize: 60,
-        maxGenerations: 500,
-        mutationRate: 0.2
+        populationSize: 60,      // ❌ Should be 100
+        maxGenerations: 500,     // ❌ Should be 800
+        mutationRate: 0.2        // ❌ Should be 0.25
       }
     });
 
@@ -147,15 +139,11 @@ export default function Generate() {
       } else if (type === 'result') {
         setResult(result);
         setProgress(100);
-        
-        const finalTimetable = result.timetable;
-        dispatch({ type: 'SET_TIMETABLE', payload: finalTimetable });
+        dispatch({ type: 'SET_TIMETABLE', payload: result.timetable });
         setRunning(false);
         worker.terminate();
 
-        if (apiKey) {
-          runAiRefinement(finalTimetable);
-        } else if (result.converged) {
+        if (result.converged) {
           toast({ title: 'Perfect timetable generated!', description: `Converged at generation ${result.generation}` });
         } else {
           toast({ title: 'Best timetable found', description: `Fitness: ${result.fitness} (lower is better)` });
@@ -173,48 +161,7 @@ export default function Generate() {
       setRunning(false);
       worker.terminate();
     };
-  }, [data, validate, dispatch, apiKey]);
-
-  const runAiRefinement = async (initialTimetable: ClassSession[]) => {
-    if (!apiKey) return;
-    setAiRunning(true);
-    setAiOptimized(false);
-    
-    try {
-      const summary = summarizeTimetable({ ...data, generatedTimetable: initialTimetable });
-      const prompt = buildOptimizationPrompt(summary);
-      
-      const aiResponse = await callGroqApi(apiKey, prompt, SYSTEM_PROMPT);
-      const swaps = parseAiSwaps(aiResponse);
-      
-      if (swaps.length > 0) {
-        const engine = new ConstraintEngine(
-          new TimeSlotManager(),
-          data.subjects,
-          data.facultySectionMappings,
-          data.labRooms,
-          data.labRoomMappings
-        );
-        
-        const optimized = applyAiSwaps(initialTimetable, swaps, engine);
-        dispatch({ type: 'SET_TIMETABLE', payload: optimized });
-        setAiOptimized(true);
-        
-        const reasons = swaps.map(s => s.reason).join(' • ');
-        toast({ 
-          title: 'AI Enhancement Success', 
-          description: `Swaps applied: ${reasons.substring(0, 100)}${reasons.length > 100 ? '...' : ''}` 
-        });
-      } else {
-        toast({ title: 'AI Review Complete', description: 'Your timetable is already highly optimized!' });
-      }
-    } catch (err: any) {
-      console.error(err);
-      toast({ title: 'AI Refinement failed', description: err.message, variant: 'destructive' });
-    } finally {
-      setAiRunning(false);
-    }
-  };
+  }, [data, validate, dispatch]);
 
   return (
     <div className="p-6 space-y-8 animate-fade-in max-w-4xl mx-auto pb-24">
@@ -367,45 +314,13 @@ export default function Generate() {
             </div>
           )}
 
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground flex items-center gap-2">
-                 <ShieldCheck className="h-3 w-3" /> Groq API Key (Llama-3 Optimization)
-              </Label>
-              <Input 
-                type="password" 
-                placeholder="gsk_..." 
-                value={apiKey} 
-                onChange={(e) => setApiKey(e.target.value)}
-                className="h-10 font-mono text-xs bg-muted/30 border-2 focus-visible:ring-primary/20"
-              />
-            </div>
-
-            {aiRunning && (
-              <div className="p-4 rounded-xl bg-primary/5 border-2 border-primary/20 flex items-center gap-4 animate-pulse">
-                <Wand2 className="h-8 w-8 text-primary animate-spin" />
-                <div>
-                  <div className="text-sm font-black text-primary uppercase tracking-tighter">AI Refinement in Progress</div>
-                  <div className="text-[10px] font-bold text-muted-foreground italic">Analyzing faculty workloads and section density...</div>
-                </div>
-              </div>
-            )}
-
-            {aiOptimized && (
-              <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 flex items-center gap-3">
-                <Sparkles className="h-5 w-5" />
-                <span className="text-xs font-black uppercase tracking-tight">AI Optimization Applied</span>
-              </div>
-            )}
-
-            <div className="flex gap-2">
-              <Button onClick={generate} disabled={running || aiRunning} className="flex-1 bg-slate-950 font-black tracking-widest uppercase text-xs h-12">
-                <Play className="h-4 w-4 mr-2" /> {running ? 'GA Running...' : (aiRunning ? 'AI Refining...' : 'Generate with AI')}
-              </Button>
-              <Button variant="outline" onClick={reset} disabled={running || aiRunning} className="h-12 w-12 border-2 group hover:border-primary/50">
-                <RotateCcw className="h-5 w-5 group-hover:rotate-180 transition-transform duration-500" />
-              </Button>
-            </div>
+          <div className="flex gap-2">
+            <Button onClick={generate} disabled={running} className="flex-1">
+              <Play className="h-4 w-4 mr-1" /> {running ? 'Running...' : 'Generate'}
+            </Button>
+            <Button variant="outline" onClick={reset} disabled={running}>
+              <RotateCcw className="h-4 w-4" />
+            </Button>
           </div>
         </CardContent>
       </Card>

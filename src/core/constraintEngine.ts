@@ -49,6 +49,7 @@ export class ConstraintEngine {
       ...this.checkCareerPathLabCapacityOverlap(sessions),
       ...this.checkThirtyFiveCapacityLabPairing(sessions),
       ...this.checkFacultySectionConsistency(sessions),
+      ...this.checkLinkedSubjectConsistency(sessions),
       ...this.checkSoftConstraints(sessions),
     ];
   }
@@ -122,7 +123,7 @@ export class ConstraintEngine {
           violations.push({
             type: 'hard',
             message: `Missing hours: ${subject.code} in ${sectionId} (${actualHours}/${subject.weeklyHours})`,
-            penalty: 1000 * (subject.weeklyHours - actualHours),
+            penalty: 3000 * (subject.weeklyHours - actualHours),  // Increased from 1000 to prioritize filling all hours
           });
         }
       }
@@ -396,7 +397,7 @@ export class ConstraintEngine {
 
     // Enforce exact 2-hour continuous blocks for LAB and INTEGRATED subjects
     const labSubjects = [...this.subjects.values()].filter(
-      s => s.subjectType === SubjectType.LAB || s.subjectType === SubjectType.INTEGRATED
+      s => s.subjectType === SubjectType.LAB || s.subjectType === SubjectType.INTEGRATED || s.subjectType === SubjectType.THEORY_LAB
     );
 
     for (const subject of labSubjects) {
@@ -436,7 +437,7 @@ export class ConstraintEngine {
           violations.push({
             type: 'hard',
             message: `Lab not continuous: ${subject.code} in ${sectionId} (${continuousPairCount}/${expectedPairs} pairs)`,
-            penalty: 1000,
+            penalty: 5000 * (expectedPairs - continuousPairCount),  // Increased penalty - CRITICAL constraint
           });
         }
       }
@@ -526,7 +527,29 @@ export class ConstraintEngine {
     return violations;
   }
 
-  // ─── LEISURE PLACEMENT RULES ──────────────────────────────────
+  // ─── HARD: Linked Subject Faculty Consistency ─────────────────
+  private checkLinkedSubjectConsistency(sessions: ClassSession[]): ConstraintViolation[] {
+    const violations: ConstraintViolation[] = [];
+    const sectionIds = [...new Set(sessions.map(s => s.sectionId))];
+
+    for (const sectionId of sectionIds) {
+      const sectionSessions = sessions.filter(s => s.sectionId === sectionId);
+      for (const session of sectionSessions) {
+        const subj = this.subjects.get(session.subjectCode);
+        if (subj?.linkedSubjectCode) {
+          const linkedSession = sectionSessions.find(s => s.subjectCode === subj.linkedSubjectCode);
+          if (linkedSession && session.facultyId !== linkedSession.facultyId) {
+            violations.push({
+              type: 'hard',
+              message: `Linked subject faculty mismatch: ${session.subjectCode} and ${subj.linkedSubjectCode} in ${sectionId} must have same faculty`,
+              penalty: 2000,
+            });
+          }
+        }
+      }
+    }
+    return violations;
+  }
   // Leisure allowed ONLY at slot 3 (12:10-1:10) or slot 5 (3:00-4:00)
   // First period (slot 0) must NEVER be leisure
   // Period after lunch (slot 4) must NEVER be leisure
@@ -859,7 +882,7 @@ export class ConstraintEngine {
         violations.push({
           type: 'hard',
           message: `Faculty inconsistency: ${subjectCode} in ${sectionId} has multiple faculties assigned: ${Array.from(faculties).join(', ')}`,
-          penalty: 1000,
+          penalty: 5000,  // Increased penalty for multiple faculty assignment
         });
       }
     }
@@ -871,7 +894,7 @@ export class ConstraintEngine {
         violations.push({
           type: 'hard',
           message: `Faculty exclusivity violated: ${facultyId} teaches multiple subjects in ${sectionId}: ${Array.from(subjects).join(', ')}`,
-          penalty: 2000,
+          penalty: 5000,  // Increased penalty for faculty jumping
         });
       }
     }

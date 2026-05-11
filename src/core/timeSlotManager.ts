@@ -28,9 +28,8 @@ export class TimeSlotManager {
   }
 
   getValidSlots(day: Day): TimeSlot[] {
-    // Strictly cap schedulable slots at 6 (index 0-5).
-    // The 16:00-17:00 slot (index 6) is reserved and must remain empty.
-    const maxSlot = 6; 
+    const maxSlot =
+      this.allowOptionalSlot && this.optionalSlotDays.includes(day) ? 7 : 6;
     return SLOT_DEFINITIONS
       .filter((s) => s.slotIndex < maxSlot)
       .map((s) => ({ ...s, day }));

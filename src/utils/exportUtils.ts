@@ -1,4 +1,4 @@
-import { ClassSession, Section, Subject, Faculty, Day, SubjectType } from '@/types/timetable';
+import { ClassSession, Section, Subject, Faculty, Day, SubjectType, LabRoom } from '@/types/timetable';
 import { DAYS, SLOT_DEFINITIONS } from '@/core/timeSlotManager';
 
 interface ExportDeps {
@@ -6,6 +6,7 @@ interface ExportDeps {
   sections: Section[];
   subjects: Subject[];
   faculty: Faculty[];
+  labRooms: LabRoom[];
 }
 
 function getCellLabel(
@@ -14,7 +15,8 @@ function getCellLabel(
   day: Day,
   slotIndex: number,
   subjects: Subject[],
-  faculty: Faculty[]
+  faculty: Faculty[],
+  labRooms: LabRoom[]
 ): string {
   const session = sessions.find(
     (s) => s.sectionId === sectionId && s.day === day && s.slotIndex === slotIndex
@@ -38,8 +40,8 @@ function getCellLabel(
   let type: string;
   if (session.isCareerPath) {
     type = session.careerPathSlotType === 'lab' ? 'CP-LAB' : 'CP-THEORY';
-  } else if (subj?.subjectType === SubjectType.LAB) {
-    type = 'LAB';
+  } else if (subj?.subjectType === SubjectType.LAB || subj?.subjectType === SubjectType.THEORY_LAB) {
+    type = session.labRoomId ? 'LAB' : 'THEORY';
   } else if (subj?.subjectType === SubjectType.INTEGRATED) {
     type = session.labRoomId ? 'INT-LAB' : 'INT-THEORY'; 
   } else {
@@ -49,17 +51,18 @@ function getCellLabel(
   const subjCode = subj?.code || session.subjectCode;
   let text = `[${type}] ${subjCode} | ${facultyDisplay}`;
   if (session.labRoomId) {
-    text += ` | ${session.labRoomId}`;
+    const lab = labRooms?.find(l => l.id === session.labRoomId);
+    text += ` | ${lab?.name || session.labRoomId}`;
   }
   return text;
 }
 
-export function exportToCSV({ sessions, sections, subjects, faculty }: ExportDeps): string {
+export function exportToCSV({ sessions, sections, subjects, faculty, labRooms }: ExportDeps): string {
   const lines: string[] = [];
 
   // Build display columns: slot0, slot1, BREAK, slot2, slot3, LUNCH, slot4, slot5
   const displayCols: { label: string; slotIndex: number | null; type: 'slot' | 'break' | 'lunch' }[] = [];
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i < 6; i++) {
     const s = SLOT_DEFINITIONS[i];
     if (i === 2) displayCols.push({ label: 'BREAK (11:00-11:10)', slotIndex: null, type: 'break' });
     if (i === 4) displayCols.push({ label: 'LUNCH (13:10-14:00)', slotIndex: null, type: 'lunch' });
@@ -87,7 +90,7 @@ export function exportToCSV({ sessions, sections, subjects, faculty }: ExportDep
         if (!session) return '""';
         
         const subj = subjects.find(s => s.code === session.subjectCode);
-        const isLab = subj && (subj.subjectType === SubjectType.LAB || subj.subjectType === SubjectType.INTEGRATED);
+        const isLab = subj && (subj.subjectType === SubjectType.LAB || subj.subjectType === SubjectType.INTEGRATED || subj.subjectType === SubjectType.THEORY_LAB);
         const isCpLab = session.isCareerPath && session.careerPathSlotType === 'lab';
         
         if ((isLab || isCpLab) && colIdx < displayCols.length - 1) {
@@ -100,7 +103,7 @@ export function exportToCSV({ sessions, sections, subjects, faculty }: ExportDep
           }
         }
 
-        const label = getCellLabel(sessions, section.id, day, col.slotIndex, subjects, faculty);
+        const label = getCellLabel(sessions, section.id, day, col.slotIndex, subjects, faculty, labRooms);
         return `"${label}"`; // Preserve \n for native Excel multiline cells
       });
       lines.push([day, ...fixedCells].join(','));
@@ -110,10 +113,10 @@ export function exportToCSV({ sessions, sections, subjects, faculty }: ExportDep
   return lines.join('\n');
 }
 
-export function exportToHTML({ sessions, sections, subjects, faculty }: ExportDeps): string {
+export function exportToHTML({ sessions, sections, subjects, faculty, labRooms }: ExportDeps): string {
   // Build display columns with break and lunch
   const displayCols: { label: string; slotIndex: number | null; type: 'slot' | 'break' | 'lunch' }[] = [];
-  for (let i = 0; i < 7; i++) {
+  for (let i = 0; i < 6; i++) {
     const s = SLOT_DEFINITIONS[i];
     if (i === 2) displayCols.push({ label: '11:00-11:10', slotIndex: null, type: 'break' });
     if (i === 4) displayCols.push({ label: '13:10-14:00', slotIndex: null, type: 'lunch' });
@@ -205,7 +208,7 @@ export function exportToHTML({ sessions, sections, subjects, faculty }: ExportDe
 
             let colspan = 1;
 
-            const isLab = subj && (subj.subjectType === SubjectType.LAB || subj.subjectType === SubjectType.INTEGRATED);
+            const isLab = subj && (subj.subjectType === SubjectType.LAB || subj.subjectType === SubjectType.INTEGRATED || subj.subjectType === SubjectType.THEORY_LAB);
             const isCpLab = session.isCareerPath && session.careerPathSlotType === 'lab';
 
             if ((isLab || isCpLab) && colIdx < displayCols.length - 1) {
@@ -224,8 +227,8 @@ export function exportToHTML({ sessions, sections, subjects, faculty }: ExportDe
             let type = '';
             if (session.isCareerPath) {
               type = session.careerPathSlotType === 'lab' ? 'CP-LAB' : 'CP-THEORY';
-            } else if (subj?.subjectType === SubjectType.LAB) {
-              type = 'LAB';
+            } else if (subj?.subjectType === SubjectType.LAB || subj?.subjectType === SubjectType.THEORY_LAB) {
+              type = session.labRoomId ? 'LAB' : 'THEORY';
             } else if (subj?.subjectType === SubjectType.INTEGRATED) {
               type = session.labRoomId ? 'INT-LAB' : 'INT-THEORY'; 
             } else {
@@ -235,6 +238,10 @@ export function exportToHTML({ sessions, sections, subjects, faculty }: ExportDe
             html += `<td colspan="${colspan}">
               <span class="sub">${subj?.code || session.subjectCode}</span>
               <span class="fac">${facultyHTML}</span>
+              <span class="type" style="display:block;font-size:9px;font-weight:800;color:var(--primary);margin-top:2px;text-transform:uppercase">
+                ${subj ? (subj.credits === 2 ? 'EMPLOYABILITY SKILLS' : (subj.credits === 4 ? 'INTEGRATED' : (subj.credits && subj.credits > 4 ? '(THEORY+LAB)' : type))) : type}
+              </span>
+              ${session.labRoomId ? `<span class="lab-id" style="display:block;font-size:8px;font-weight:900;margin-top:2px;color:var(--primary);opacity:0.8">LAB: ${labRooms?.find(l => l.id === session.labRoomId)?.name || session.labRoomId}</span>` : ''}
             </td>`;
           } else {
             html += `<td class="empty"></td>`;
@@ -246,7 +253,9 @@ export function exportToHTML({ sessions, sections, subjects, faculty }: ExportDe
     html += `</table>`;
 
     // Reference Table for Sections
-    const sectionSubjects = subjects.filter(s => sessions.some(sess => sess.sectionId === section.id && sess.subjectCode === s.code));
+    const sectionSubjects = subjects
+      .filter(s => sessions.some(sess => sess.sectionId === section.id && sess.subjectCode === s.code))
+      .sort((a, b) => a.code.localeCompare(b.code));  // Sort alphabetically by code
     if (sectionSubjects.length > 0) {
       html += `<div style="margin-top:20px;margin-bottom:50px;border:1px solid var(--border);border-radius:10px;overflow:hidden">
         <div style="background:#0f172a;color:#fff;padding:12px 16px;font-size:15px;font-weight:900;text-transform:uppercase;letter-spacing:0.1em">Course Information</div>
@@ -273,7 +282,7 @@ export function exportToHTML({ sessions, sections, subjects, faculty }: ExportDe
         };
         const facName = getFac();
 
-        if (subj.credits && subj.credits > 4) {
+        if ((subj.credits && subj.credits > 4) || subj.subjectType === SubjectType.INTEGRATED) {
           html += `<tr>
             <td style="padding:10px 5px">${sNo++}</td>
             <td style="padding:10px 5px">${subj.code}</td>

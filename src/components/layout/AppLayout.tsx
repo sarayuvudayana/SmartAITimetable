@@ -1,6 +1,6 @@
-import React, { forwardRef, useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { Home, Database, Play, Eye, Users, Download, LogOut, Moon, Sun, User, Info, Building2, ChevronDown } from 'lucide-react';
+import { Home, Database, Play, Eye, Users, Download, LogOut, Moon, Sun, User, ChevronDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -9,15 +9,14 @@ import { useDarkMode } from '@/hooks/use-dark-mode';
 
 const navItems = [
   { to: '/', icon: Home, label: 'Home' },
-  { to: '/input', icon: Database, label: 'Input' },
+  { to: '/input', icon: Database, label: 'Data' },
   { to: '/generate', icon: Play, label: 'Generate' },
   { to: '/view', icon: Eye, label: 'Section' },
   { to: '/faculty-view', icon: Users, label: 'Faculty' },
-  { to: '/lab-view', icon: Building2, label: 'Lab' },
   { to: '/export', icon: Download, label: 'Export' },
 ];
 
-const AppLayout = forwardRef<HTMLDivElement>((_, ref) => {
+export default function AppLayout() {
   const { user, signOut } = useAuth();
   const { isDark, toggle } = useDarkMode();
   const navigate = useNavigate();
@@ -25,9 +24,13 @@ const AppLayout = forwardRef<HTMLDivElement>((_, ref) => {
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const handleLogout = async () => {
-    await signOut();
-    toast({ title: 'Logged out' });
-    setProfileOpen(false);
+    try {
+      await signOut();
+      toast({ title: 'Logged out successfully' });
+      setProfileOpen(false);
+    } catch (error) {
+      toast({ title: 'Logout failed', variant: 'destructive' });
+    }
   };
 
   // Close dropdown on outside click
@@ -46,7 +49,7 @@ const AppLayout = forwardRef<HTMLDivElement>((_, ref) => {
     : user?.email?.charAt(0).toUpperCase() || 'U';
 
   return (
-    <div ref={ref} className="flex flex-col min-h-screen bg-background">
+    <div className="flex flex-col min-h-screen bg-background transition-colors duration-300">
       {/* Professional Header */}
       <header className="border-b border-border/60 bg-card/80 backdrop-blur-md px-5 py-3 flex items-center gap-4 sticky top-0 z-50">
         <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-primary to-primary/70 flex items-center justify-center shadow-lg shadow-primary/20">
@@ -57,6 +60,16 @@ const AppLayout = forwardRef<HTMLDivElement>((_, ref) => {
           <p className="text-sm text-muted-foreground font-black tracking-widest uppercase">GMR Institute of Technology</p>
         </div>
 
+        {/* Dark mode toggle */}
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={toggle}
+          className="h-9 w-9 rounded-full hover:bg-muted"
+          aria-label="Toggle dark mode"
+        >
+          {isDark ? <Sun className="h-[18px] w-[18px] text-yellow-400" /> : <Moon className="h-[18px] w-[18px] text-muted-foreground" />}
+        </Button>
 
         {/* Profile dropdown */}
         {user && (
@@ -68,7 +81,7 @@ const AppLayout = forwardRef<HTMLDivElement>((_, ref) => {
               <div className="h-9 w-9 rounded-full bg-gradient-to-br from-primary to-primary/60 flex items-center justify-center text-primary-foreground font-bold text-sm shadow-md">
                 {userInitial}
               </div>
-              <ChevronDown className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform", profileOpen && "rotate-180")} />
+              <ChevronDown className={cn("h-3.5 w-3.5 text-muted-foreground transition-transform duration-200", profileOpen && "rotate-180")} />
             </button>
 
             {profileOpen && (
@@ -110,7 +123,7 @@ const AppLayout = forwardRef<HTMLDivElement>((_, ref) => {
             end={to === '/'}
             className={({ isActive }) =>
               cn(
-                'flex flex-col items-center gap-1 px-3 py-1.5 rounded-xl text-sm font-medium transition-all',
+                'flex flex-col items-center gap-1 px-3 py-1.5 rounded-xl text-sm font-medium transition-all duration-200',
                 isActive
                   ? 'text-primary font-bold scale-105'
                   : 'text-muted-foreground hover:text-foreground'
@@ -124,7 +137,4 @@ const AppLayout = forwardRef<HTMLDivElement>((_, ref) => {
       </nav>
     </div>
   );
-});
-AppLayout.displayName = 'AppLayout';
-
-export default AppLayout;
+}

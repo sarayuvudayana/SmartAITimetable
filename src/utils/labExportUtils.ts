@@ -63,15 +63,15 @@ export function exportLabToCSV({ sessions, faculty, subjects, sections, labRooms
         let type: string;
         if (session.isCareerPath) {
           type = session.careerPathSlotType === 'lab' ? 'CP-LAB' : 'CP-THEORY';
-        } else if (subj?.subjectType === SubjectType.LAB) {
-          type = 'LAB';
+        } else if (subj?.subjectType === SubjectType.LAB || subj?.subjectType === SubjectType.THEORY_LAB) {
+          type = session.labRoomId ? 'LAB' : 'THEORY';
         } else if (subj?.subjectType === SubjectType.INTEGRATED) {
           type = 'INT-LAB'; // If it's in a lab room, it's the lab portion
         } else {
           type = 'THEORY'; // Fallback
         }
 
-        const isLab = subj && (subj.subjectType === SubjectType.LAB || subj.subjectType === SubjectType.INTEGRATED);
+        const isLab = subj && (subj.subjectType === SubjectType.LAB || subj.subjectType === SubjectType.INTEGRATED || subj.subjectType === SubjectType.THEORY_LAB);
         const isCpLab = session.isCareerPath && session.careerPathSlotType === 'lab';
 
         if ((isLab || isCpLab) && colIdx < displayCols.length - 1) {

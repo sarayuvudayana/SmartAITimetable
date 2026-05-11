@@ -27,7 +27,8 @@ function parseDay(val: string): Day {
 }
 
 function parseSubjectType(val: string): SubjectType {
-  const lower = val.toLowerCase();
+  const lower = val.toLowerCase().replace(' ', '');
+  if (lower.includes('lab') && lower.includes('theory')) return SubjectType.THEORY_LAB;
   if (lower === 'lab') return SubjectType.LAB;
   if (lower === 'integrated') return SubjectType.INTEGRATED;
   return SubjectType.THEORY;
